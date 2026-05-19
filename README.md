@@ -2,8 +2,8 @@
 
 本项目是太赫兹四馈源阵列相位校准上位机，第一版使用 Python + PySide6。当前有两套独立界面：
 
-- `IU0`：馈源间相位校准数据测试窗口，用于 Feed1~Feed4 依次测试、自动扫描、保存 Excel。
-- `IU1`：馈源阵输出相位配置窗口，用于手动配置 Feed1~Feed4 相位并下发给 STM32。
+- `UI0`：馈源间相位校准数据测试窗口，用于 Feed1~Feed4 依次测试、自动扫描、保存 Excel。
+- `UI1`：馈源阵输出相位配置窗口，用于手动配置 Feed1~Feed4 相位并下发给 STM32。
 
 当前上位机到 STM32 的协议只发送 `feed_id`、`phase_deg`、`enabled`。幅值不发送；波束指向角用于转台电机/实验记录，当前也不发送给 STM32。
 
@@ -15,7 +15,7 @@
 pip install -r requirements.txt
 ```
 
-默认打开 IU0 校准数据测试窗口：
+默认打开 UI0 校准数据测试窗口：
 
 ```powershell
 python run_app.py
@@ -35,7 +35,7 @@ python run_calibration_ui.py --serial-port COM3
 python run_config_ui.py --serial-port COM3
 ```
 
-`run_app.py --config` 也可以打开 IU1：
+`run_app.py --config` 也可以打开 UI1：
 
 ```powershell
 python run_app.py --config --serial-port COM3
@@ -63,9 +63,9 @@ python run_app.py --config --serial-port COM3
 
 ```text
 Calibration_Control_PC/
-├─ run_app.py                         # 通用入口；默认 IU0，带 --config 打开 IU1
-├─ run_calibration_ui.py              # IU0 校准数据测试窗口入口
-├─ run_config_ui.py                   # IU1 相位配置窗口入口
+├─ run_app.py                         # 通用入口；默认 UI0，带 --config 打开 UI1
+├─ run_calibration_ui.py              # UI0 校准数据测试窗口入口
+├─ run_config_ui.py                   # UI1 相位配置窗口入口
 ├─ requirements.txt                   # 运行依赖
 ├─ pyproject.toml                     # Python 项目元信息
 ├─ src/thz_calibration/
@@ -87,8 +87,8 @@ Calibration_Control_PC/
 │  │  ├─ serial_transport.py          # pyserial 串口发送
 │  │  └─ simulated.py                 # 模拟 STM32 ACK，便于无硬件调试
 │  └─ ui/
-│     ├─ calibration_test_window.py    # IU0 主窗口；Feed1~4 测试按钮和全局设置
-│     ├─ phase_config_window.py        # IU1 主窗口；手动相位配置、串口连接、数据发送
+│     ├─ calibration_test_window.py    # UI0 主窗口；Feed1~4 测试按钮和全局设置
+│     ├─ phase_config_window.py        # UI1 主窗口；手动相位配置、串口连接、数据发送
 │     ├─ common.py                     # UI 共用控件工厂、串口枚举、锁定控件
 │     └─ style.py                      # 全局 QSS 样式
 ├─ docs/
@@ -114,14 +114,14 @@ Calibration_Control_PC/
 | `spectrum_analyzer.py` | 频谱仪读数 | 改 SCPI 指令、接真实频谱仪、优化模拟数据 |
 | `engine.py` | 校准扫描主流程 | 改逐点发送逻辑、稳定等待、采样策略、终端日志 |
 | `excel_exporter.py` | Excel 导出和最佳点读取 | 改模板单元格、最终汇总表、输出文件名 |
-| `calibration_test_window.py` | IU0 界面和按钮逻辑 | 改校准界面布局、按钮流程、Feed1~4 扫描入口 |
-| `phase_config_window.py` | IU1 手动配置界面 | 改手动相位配置、串口连接、数据发送反馈 |
+| `calibration_test_window.py` | UI0 界面和按钮逻辑 | 改校准界面布局、按钮流程、Feed1~4 扫描入口 |
+| `phase_config_window.py` | UI1 手动配置界面 | 改手动相位配置、串口连接、数据发送反馈 |
 | `common.py` | UI 共用小工具 | 改输入框、数字框、串口列表等共用控件 |
 | `style.py` | UI 样式 | 改整体视觉、控件尺寸、颜色 |
 
 ## 关键数据流
 
-### IU0 校准扫描
+### UI0 校准扫描
 
 ```text
 run_calibration_ui.py
@@ -152,7 +152,7 @@ Feed4 测试完成后，程序会读取前面所有输出表中的最佳点，�
 output/CalData_MultiFeed_BDp30_212.xlsx
 ```
 
-### IU1 手动相位配置
+### UI1 手动相位配置
 
 ```text
 run_config_ui.py
@@ -165,7 +165,7 @@ run_config_ui.py
   -> ProtocolEncoder.encode_set_feeds()
 ```
 
-IU1 的“数据发送”会在界面信息反馈窗打印每个 Feed 的相位、使能状态、完整 HEX 帧和发送结果。
+UI1 的“数据发送”会在界面信息反馈窗打印每个 Feed 的相位、使能状态、完整 HEX 帧和发送结果。
 
 ## STM32 发送协议
 
@@ -251,8 +251,8 @@ output/
 | 改 Feed2~4 前序最佳相位继承 | `src/thz_calibration/ui/calibration_test_window.py` |
 | 改 Excel 单元格或最终汇总表 | `src/thz_calibration/data/excel_exporter.py` |
 | 改频谱仪 SCPI 指令 | `src/thz_calibration/instruments/spectrum_analyzer.py` |
-| 改 IU0 布局 | `src/thz_calibration/ui/calibration_test_window.py` |
-| 改 IU1 布局或手动发送反馈 | `src/thz_calibration/ui/phase_config_window.py` |
+| 改 UI0 布局 | `src/thz_calibration/ui/calibration_test_window.py` |
+| 改 UI1 布局或手动发送反馈 | `src/thz_calibration/ui/phase_config_window.py` |
 | 改整体样式 | `src/thz_calibration/ui/style.py` |
 
 ## 验证命令
