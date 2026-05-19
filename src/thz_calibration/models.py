@@ -108,7 +108,7 @@ class CalibrationResult:
 
 
 def default_feed_states(enabled_feeds: Iterable[int] | None = None) -> list[FeedState]:
-    enabled = set(enabled_feeds or range(1, DEFAULTS.feed_count + 1))
+    enabled = set(range(1, DEFAULTS.feed_count + 1)) if enabled_feeds is None else set(enabled_feeds)
     return [
         FeedState(feed_id=feed_id, enabled=feed_id in enabled)
         for feed_id in range(1, DEFAULTS.feed_count + 1)

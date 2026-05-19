@@ -26,6 +26,33 @@ class ExcelExporter:
             return self._save_feed1_test_data(result)
         return self._save_cal_process(result)
 
+    def save_multi_feed_result(self, frequency_ghz: float, beam_angle_deg: float) -> Path:
+        output = self._copy_or_create("CalData_MultiFeed_BDp30_212.xlsx", "CalData")
+        wb = load_workbook(output)
+        ws = wb.active
+        ws["A1"] = frequency_ghz
+        ws["B1"] = beam_angle_deg
+
+        missing: list[int] = []
+        for feed_id in range(1, 5):
+            best = self.read_best_feed_point(feed_id)
+            if best is None:
+                missing.append(feed_id)
+                continue
+
+            phase_deg, power_uw = best
+            row = feed_id * 2 + 1
+            ws.cell(row=row, column=2, value=phase_deg)
+            ws.cell(row=row, column=3, value=round(power_uw, 6))
+            self._mark_cells_red(ws, row, (2, 3))
+
+        if missing:
+            missing_text = ", ".join(f"Feed{feed_id}" for feed_id in missing)
+            raise ValueError(f"缺少最终汇总所需的最佳点数据：{missing_text}")
+
+        wb.save(output)
+        return output
+
     def _save_feed1_test_data(self, result: CalibrationResult) -> Path:
         output = self._copy_or_create("TestData_Feed1_BDp30_212.xlsx", "TestData")
         wb = load_workbook(output)

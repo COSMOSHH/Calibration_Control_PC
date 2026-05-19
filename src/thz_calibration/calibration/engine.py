@@ -97,8 +97,9 @@ class CalibrationEngine:
         return states
 
     def _format_feed_phase_log(self, feed_states: list[FeedState]) -> str:
-        phases = ", ".join(
+        states = ", ".join(
+            f"CE{state.feed_id}={'打开' if state.enabled else '关闭'} "
             f"Feed{state.feed_id}={state.phase_deg:.6f} deg"
             for state in sorted(feed_states, key=lambda item: item.feed_id)
         )
-        return f"校准发送相位：{phases}"
+        return f"校准发送状态：{states}"

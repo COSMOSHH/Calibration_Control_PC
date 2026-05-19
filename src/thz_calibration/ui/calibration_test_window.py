@@ -327,7 +327,7 @@ class CalibrationTestWindow(QMainWindow):
             self.best_feed_phases.pop(current_feed_id, None)
 
     def _feed_states_for_scan(self, target_feed_id: int) -> list[FeedState]:
-        states = default_feed_states()
+        states = default_feed_states(enabled_feeds=range(1, target_feed_id + 1))
         for state in states:
             if state.feed_id >= target_feed_id:
                 continue
@@ -342,7 +342,6 @@ class CalibrationTestWindow(QMainWindow):
             if best_phase is not None:
                 state.phase_deg = best_phase
                 state.amplitude = DEFAULTS.default_amplitude
-                state.enabled = True
         return states
 
     def _run_scan(self, feed_id: int) -> None:
@@ -377,6 +376,9 @@ class CalibrationTestWindow(QMainWindow):
                 self.best_feed_phases[feed_id] = best.phase_deg
                 text += f"\n最佳相位：{best.phase_deg:g} deg\n功率：{best.average_power_uw:.6f} uW"
             text += f"\n\n{output.name}"
+            if feed_id == DEFAULTS.feed_count:
+                final_output = self.exporter.save_multi_feed_result(config.frequency_ghz, config.beam_angle_deg)
+                text += f"\n最终汇总：{final_output.name}"
             self._message(text)
         except Exception as exc:
             QMessageBox.warning(self, "测试失败", str(exc))
