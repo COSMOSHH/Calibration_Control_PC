@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+output/
+.vscode/
+~$*.xlsx
+docs/参考文档/THz_Calibration_System - 3-17频谱仪集成版-1（chushi调试)/
