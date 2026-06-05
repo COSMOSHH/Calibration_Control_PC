@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# 项目根路径统一从当前文件向上推导，避免在不同启动目录下找不到 docs/output。
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DOCS_DIR = ROOT_DIR / "docs"
 TEMPLATE_DIR = DOCS_DIR / "馈源间相位校准数据保存格式"
@@ -20,20 +21,35 @@ SPECTRUM_MODE_VISA = "visa"
 
 @dataclass(frozen=True)
 class AppDefaults:
-    # Switch to "serial" for real STM32 serial transport.
+    """全局默认参数集中放在这里，便于联调时快速改运行模式和默认频点。
+
+    注意：这是冻结 dataclass，运行中不要直接改 DEFAULTS；如果需要在 UI 中临时变更，
+    应从控件读取当前值并传入对应配置对象。
+    """
+
+    # 调试无硬件时保持 simulated；实机下发给 STM32 时改成 serial。
     device_mode: str = DEVICE_MODE_SIMULATED
-    # Switch to "visa" for real pyvisa spectrum analyzer access.
+    # 调试无频谱仪时保持 simulated；接真实频谱仪时改成 visa。
     spectrum_analyzer_mode: str = SPECTRUM_MODE_SIMULATED
+    # pyvisa 资源地址，实机联调频谱仪连接失败时优先检查这里。
     visa_address: str = "TCPIP::10.18.18.2::INSTR"
+    # UI0/模拟频谱仪使用的默认测试频点，UI1 也默认用它计算波束配相。
     frequency_ghz: float = 212.0
+    # UI0 校准记录里的波束角默认值；UI1 的 θ0 默认值在 phase_config_window.py。
     beam_angle_deg: float = 30.0
+    # UI0 扫描相位范围，使用 Decimal 生成点位以避免浮点步进丢点。
     phase_start_deg: float = 0.0
     phase_end_deg: float = 354.375
     phase_step_deg: float = 5.625
+    # 当前硬件和 UI 都按四馈源阵列设计。
     feed_count: int = 4
+    # amplitude 暂不写入 STM32 payload，但保留在 FeedState 中方便后续扩展。
     default_amplitude: float = 0.12
+    # 每次相位下发后等待硬件稳定的默认时间。
     settle_time_ms: int = 500
+    # UI0 每个相位点读取频谱仪的次数，最后取平均值。
     sample_count: int = 3
+    # 串口默认值用于启动后还没有枚举到串口时兜底。
     serial_port: str = "COM1"
     serial_baudrate: int = 9600
 
@@ -42,6 +58,7 @@ DEFAULTS = AppDefaults()
 
 
 def _normalize_mode(name: str, mode: str, allowed: tuple[str, ...]) -> str:
+    """把运行模式字符串规范化，并在写错配置时尽早报错。"""
     normalized = mode.strip().lower()
     if normalized not in allowed:
         choices = ", ".join(allowed)
@@ -50,6 +67,13 @@ def _normalize_mode(name: str, mode: str, allowed: tuple[str, ...]) -> str:
 
 
 def create_device_controller(serial_port: str | None = None, mode: str | None = None):
+    """按配置创建下位机控制器。
+
+    调试定位：
+    - UI 数据最终都会通过 DeviceController 发送。
+    - 如果没有硬件，保持 simulated，可在界面里看到完整 HEX 但不会走串口。
+    - 如果要实机发送，切到 serial 并检查 serial_port。
+    """
     from .controllers import DeviceController
     from .transport import SerialTransport, SimulatedTransport
 
@@ -65,6 +89,10 @@ def create_device_controller(serial_port: str | None = None, mode: str | None = 
 
 
 def create_spectrum_analyzer(mode: str | None = None):
+    """按配置创建频谱仪读数对象。
+
+    UI0 扫描功率时调用；模拟模式会生成可重复的相位-功率曲线，方便无仪器调试。
+    """
     from .instruments import SimulatedSpectrumAnalyzer, VisaSpectrumAnalyzer
 
     selected = _normalize_mode(

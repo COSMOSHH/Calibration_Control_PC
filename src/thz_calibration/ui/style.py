@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 全局 QSS 样式集中放在这里，两个主窗口共用。
+# 调试控件禁用样式时注意 common.set_locked() 会设置 locked 属性，
+# 下面的 QLineEdit[locked="true"] / QDoubleSpinBox[locked="true"] 依赖它生效。
 APP_STYLESHEET = """
 QMainWindow {
     background: #f6f6f6;

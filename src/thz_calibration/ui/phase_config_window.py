@@ -23,11 +23,28 @@ from PySide6.QtWidgets import (
 from ..config import DEFAULTS, DEVICE_MODE_SERIAL, create_device_controller
 from ..data import ExcelExporter
 from ..models import FeedState
-from .common import available_serial_ports, lock_widgets, make_spin
+from .common import available_serial_ports, lock_widgets, make_spin, set_locked
 from .style import APP_STYLESHEET
 
 
+LIGHT_SPEED_MPS = 3.0e8
+FEED_SPACING_M = 15.52e-3
+GHZ_TO_HZ = 1.0e9
+# UI1 默认输入值：θ0 和四个馈源相位都从 0 deg 开始。
+DEFAULT_BEAM_THETA_DEG = 0.0
+DEFAULT_FEED_PHASE_DEG = 0.0
+
+
 class PhaseConfigWindow(QMainWindow):
+    """UI1：馈源阵输出相位配置窗口。
+
+    主要调试路线：
+    - 基础设置：输出频率、本振/中频功率、串口连接。
+    - 相位配置：手动输入四馈源相位，或勾选“通过波束指向配相”自动计算。
+    - 自动校准：读取 UI0 生成的最佳相位表，把期望相位叠加校准偏移。
+    - 数据发送：phase_queue -> DeviceController -> 协议 HEX -> 串口/模拟传输。
+    """
+
     def __init__(self, serial_port: str | None = None) -> None:
         super().__init__()
         self.setWindowTitle("分布式有源驱动馈源阵输出相位配置软件")
@@ -38,7 +55,9 @@ class PhaseConfigWindow(QMainWindow):
         self.device = create_device_controller(self.serial_port_default)
         self.device.connect()
         self.exporter = ExcelExporter()
+        # phase_queue 是最终待发送队列；相位确认/初始同步/自动校准都会写入它。
         self.phase_queue: list[FeedState] = []
+        # 下面这些布尔状态用于避免重复确认、重复自动校准，以及驱动按钮 checked 状态。
         self.basic_confirmed = False
         self.phase_confirmed = False
         self.auto_calibrated = False
@@ -49,6 +68,7 @@ class PhaseConfigWindow(QMainWindow):
         self._initialize_button_states()
 
     def _build_ui(self) -> None:
+        """组装 UI1 的三块区域：基础设置、相位配置、信息反馈窗。"""
         shell = QFrame()
         shell.setObjectName("Shell")
         self.setCentralWidget(shell)
@@ -66,6 +86,11 @@ class PhaseConfigWindow(QMainWindow):
         root.addWidget(self._build_feedback_group(), stretch=1)
 
     def _build_basic_group(self) -> QGroupBox:
+        """构建基础设置区。
+
+        输出频率会参与波束指向配相计算；本振/中频按钮目前只维护 UI 状态和反馈，
+        尚未下发独立硬件命令。
+        """
         group = QGroupBox("基础设置")
         group.setFixedHeight(185)
 
@@ -169,6 +194,7 @@ class PhaseConfigWindow(QMainWindow):
         right_button: QPushButton | None,
         width: int,
     ) -> QWidget:
+        """基础设置区里“功率输入 + 开关按钮”的复用布局。"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -187,6 +213,11 @@ class PhaseConfigWindow(QMainWindow):
         return widget
 
     def _build_phase_group(self) -> QGroupBox:
+        """构建相位配置区。
+
+        手动模式下四个馈源相位可编辑，θ0 禁用；波束配相模式下四个相位由公式
+        自动计算，θ0 启用，φ0 只作为可编辑占位输入，不参与计算。
+        """
         group = QGroupBox("")
         group.setFixedHeight(310)
         layout = QGridLayout(group)
@@ -205,6 +236,7 @@ class PhaseConfigWindow(QMainWindow):
 
         self.initial_sync_btn.clicked.connect(self._initial_sync)
         self.phase_reset_btn.clicked.connect(self._reset_phase_inputs)
+        self.beam_checkbox.toggled.connect(self._on_beam_checkbox_toggled)
         self.phase_confirm_btn.clicked.connect(self._confirm_phase)
         self.auto_cal_btn.clicked.connect(self._auto_calibrate)
         self.data_send_btn.clicked.connect(self._send_data)
@@ -215,21 +247,25 @@ class PhaseConfigWindow(QMainWindow):
 
         self.feed_phase_spins = {}
         for index, feed_id in enumerate((1, 2, 3, 4)):
+            # feed_phase_spins 是 UI1 手动/自动配相共用的相位输入框集合。
             feed_box = QWidget()
             feed_layout = QVBoxLayout(feed_box)
             feed_layout.setContentsMargins(0, 0, 0, 0)
             feed_layout.setSpacing(14)
             feed_label = QLabel(f"馈源{feed_id}")
             feed_label.setAlignment(Qt.AlignCenter)
-            phase_spin = make_spin(30.0, 0, 360, 3, 96)
+            phase_spin = make_spin(DEFAULT_FEED_PHASE_DEG, 0, 360, 3, 96)
             self.feed_phase_spins[feed_id] = phase_spin
             feed_layout.addWidget(feed_label)
             feed_layout.addWidget(self._field_pair("相位配置（deg）", phase_spin, 250))
             layout.addWidget(feed_box, 2, index, Qt.AlignHCenter)
             layout.setColumnStretch(index, 1)
 
-        self.theta_spin = make_spin(20.0, -180, 180, 3, 96)
+        self.theta_spin = make_spin(DEFAULT_BEAM_THETA_DEG, -9999, 9999, 3, 96)
         self.phi_spin = make_spin(0.0, -180, 180, 3, 96)
+        # θ0 或频率变化时，若处于波束配相模式，立即刷新四个相位显示值。
+        self.theta_spin.valueChanged.connect(self._update_beam_phase_values)
+        self.output_freq_spin.valueChanged.connect(self._update_beam_phase_values)
         layout.addWidget(self._field_pair("波束指向角度 θ₀（deg）", self.theta_spin, 300), 4, 0, 1, 2)
         layout.addWidget(self._field_pair("波束指向角度 φ₀（deg）", self.phi_spin, 300), 4, 2, 1, 2)
 
@@ -238,9 +274,11 @@ class PhaseConfigWindow(QMainWindow):
         layout.addWidget(self.data_send_btn, 5, 2)
 
         self.phase_inputs = list(self.feed_phase_spins.values()) + [self.theta_spin, self.phi_spin, self.beam_checkbox]
+        self._sync_phase_input_availability()
         return group
 
     def _field_pair(self, label_text: str, editor: QWidget, width: int) -> QWidget:
+        """创建 UI1 中常用的“标签 + 输入框”横向组合。"""
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -253,6 +291,7 @@ class PhaseConfigWindow(QMainWindow):
         return widget
 
     def _build_feedback_group(self) -> QGroupBox:
+        """构建底部信息反馈窗，发送 HEX 和操作结果都会追加到这里。"""
         group = QGroupBox("信息反馈窗")
         group.setMinimumHeight(220)
         layout = QVBoxLayout(group)
@@ -263,12 +302,18 @@ class PhaseConfigWindow(QMainWindow):
         return group
 
     def _initialize_button_states(self) -> None:
+        """初始化成“重设/关闭”侧为选中态，匹配界面视觉设计。"""
         self._set_toggle_pair(self.basic_reset_btn, self.basic_confirm_btn)
         self._set_toggle_pair(self.lo_off_btn, self.lo_on_btn)
         self._set_toggle_pair(self.if_off_btn, self.if_on_btn)
         self._set_toggle_pair(self.phase_reset_btn, self.phase_confirm_btn)
 
     def _reset_basic(self) -> None:
+        """“基础设置-重设”按钮。
+
+        重设基础参数会让已经确认的相位队列失效，因此同步清空 phase_queue，
+        并恢复相位区域的可编辑状态。
+        """
         if not self.basic_confirmed and self._basic_inputs_are_default():
             self._set_toggle_pair(self.basic_reset_btn, self.basic_confirm_btn)
             return
@@ -282,11 +327,17 @@ class PhaseConfigWindow(QMainWindow):
         self.phase_queue.clear()
         lock_widgets(self.basic_inputs, False)
         lock_widgets(self.phase_inputs, False)
+        self._sync_phase_input_availability()
         self._set_toggle_pair(self.basic_reset_btn, self.basic_confirm_btn)
         self._set_toggle_pair(self.phase_reset_btn, self.phase_confirm_btn)
         self._feedback("基础设置已重设。")
 
     def _confirm_basic(self) -> None:
+        """“基础设置-确认”按钮。
+
+        这里目前只校验并锁定输出频率/功率输入，不直接向下位机发送本振/中频命令。
+        输出频率会被波束配相公式读取，所以相位确认前至少要保证它有有效值。
+        """
         if self.basic_confirmed:
             self._set_toggle_pair(self.basic_confirm_btn, self.basic_reset_btn)
             return
@@ -308,6 +359,7 @@ class PhaseConfigWindow(QMainWindow):
         self._feedback(f"基础设置已确认：输出频率 {freq:g} GHz，本振 {lo_power:g} dBm，中频 {if_power:g} dBm。")
 
     def _refresh_serial_ports(self) -> None:
+        """刷新 UI1 串口下拉框，保留当前选择优先。"""
         current = self.serial_combo.currentText() if hasattr(self, "serial_combo") else DEFAULTS.serial_port
         self.serial_combo.clear()
         ports = available_serial_ports(self.serial_port_default)
@@ -316,6 +368,11 @@ class PhaseConfigWindow(QMainWindow):
             self.serial_combo.setCurrentText(current)
 
     def _connect_serial(self) -> None:
+        """连接真实串口，并替换默认的设备控制器。
+
+        默认配置可能是 simulated；用户点击“串口连接”后会强制创建 serial 模式的
+        DeviceController，后续“数据发送”就会走真实 COM。
+        """
         port = self.serial_combo.currentText().strip() or self.serial_port_default
         try:
             device = create_device_controller(port, mode=DEVICE_MODE_SERIAL)
@@ -326,6 +383,11 @@ class PhaseConfigWindow(QMainWindow):
             QMessageBox.warning(self, "串口连接失败", str(exc))
 
     def _initial_sync(self) -> None:
+        """“初始同步”按钮。
+
+        语义是把期望相位设为 0 deg，再叠加 UI0 校准表中的最佳相位偏移，
+        直接写入 phase_queue。缺少校准表的馈源保持 0 deg。
+        """
         if self.phase_confirmed:
             return
 
@@ -339,6 +401,7 @@ class PhaseConfigWindow(QMainWindow):
         self.phase_confirmed = False
         self.auto_calibrated = True
         lock_widgets(self.phase_inputs, False)
+        self._sync_phase_input_availability()
         self._set_toggle_pair(self.phase_reset_btn, self.phase_confirm_btn)
         if missing:
             self._feedback(f"初始同步成功，部分馈源缺少校准表，已使用 0 相位：{missing}。")
@@ -346,23 +409,72 @@ class PhaseConfigWindow(QMainWindow):
             self._feedback("初始同步成功，校准后的 0 相位数据已写入发送队列。")
 
     def _reset_phase_inputs(self) -> None:
+        """“相位重设”按钮。
+
+        恢复四馈源相位、θ0、φ0 和波束配相复选框默认值，同时清空已确认队列。
+        """
         if not self.phase_confirmed and self._phase_inputs_are_default():
             self._set_toggle_pair(self.phase_reset_btn, self.phase_confirm_btn)
             return
 
         for spin in self.feed_phase_spins.values():
-            spin.setValue(30.0)
-        self.theta_spin.setValue(20.0)
+            spin.setValue(DEFAULT_FEED_PHASE_DEG)
+        self.theta_spin.setValue(DEFAULT_BEAM_THETA_DEG)
         self.phi_spin.setValue(0.0)
         self.beam_checkbox.setChecked(False)
         self.phase_confirmed = False
         self.auto_calibrated = False
         self.phase_queue.clear()
         lock_widgets(self.phase_inputs, False)
+        self._sync_phase_input_availability()
         self._set_toggle_pair(self.phase_reset_btn, self.phase_confirm_btn)
         self._feedback("相位输入已重设。")
 
+    def _on_beam_checkbox_toggled(self, checked: bool) -> None:
+        """切换“通过波束指向配相”时刷新输入可编辑状态。
+
+        勾选后立即根据当前 θ0/频率计算四个馈源相位；取消勾选后用户可手动编辑相位。
+        """
+        self._sync_phase_input_availability()
+        if checked and not self.phase_confirmed:
+            self._update_beam_phase_values()
+
+    def _sync_phase_input_availability(self) -> None:
+        """根据当前模式同步相位区控件启用状态。
+
+        - 已确认后：整组相位输入锁定，避免队列和界面显示不一致。
+        - 波束配相：四个馈源相位锁定，θ0 可编辑，φ0 可编辑但不生效。
+        - 手动模式：四个馈源相位可编辑，θ0 锁定。
+        """
+        if self.phase_confirmed:
+            lock_widgets(self.phase_inputs, True)
+            return
+
+        use_beam = self.beam_checkbox.isChecked()
+        for spin in self.feed_phase_spins.values():
+            set_locked(spin, use_beam)
+        set_locked(self.theta_spin, not use_beam)
+        set_locked(self.phi_spin, False)
+        set_locked(self.beam_checkbox, False)
+
+    def _update_beam_phase_values(self, *_args: object) -> None:
+        """在波束配相模式下刷新四个馈源相位显示。
+
+        触发来源包括 θ0 改动、输出频率改动、勾选波束配相。
+        """
+        if self.phase_confirmed or not self.beam_checkbox.isChecked():
+            return
+
+        phases = self._calculate_beam_phases()
+        for feed_id, phase in phases.items():
+            self.feed_phase_spins[feed_id].setValue(phase)
+
     def _confirm_phase(self) -> bool:
+        """“相位确认”按钮。
+
+        手动模式读取四个相位输入；波束模式先按公式计算四个相位。
+        最终都会写入 phase_queue，后续自动校准/数据发送都以 phase_queue 为准。
+        """
         if self.phase_confirmed:
             self._set_toggle_pair(self.phase_confirm_btn, self.phase_reset_btn)
             return True
@@ -372,7 +484,7 @@ class PhaseConfigWindow(QMainWindow):
             return False
 
         if self.beam_checkbox.isChecked():
-            if self._read_required_spins(((self.theta_spin, "波束指向角度 θ₀"), (self.phi_spin, "波束指向角度 φ₀"))) is None:
+            if self._read_required_spins(((self.theta_spin, "波束指向角度 θ₀"),)) is None:
                 self._set_toggle_pair(self.phase_reset_btn, self.phase_confirm_btn)
                 return False
             phases = self._calculate_beam_phases()
@@ -396,6 +508,11 @@ class PhaseConfigWindow(QMainWindow):
         return True
 
     def _auto_calibrate(self) -> None:
+        """“自动校准”按钮。
+
+        自动校准会读取 UI0 生成的最佳相位表，把每个馈源的期望相位叠加对应
+        最佳相位偏移。注意它会覆盖 phase_queue 中的相位。
+        """
         if self.auto_calibrated:
             return
 
@@ -415,6 +532,11 @@ class PhaseConfigWindow(QMainWindow):
             self._feedback(f"自动校准完成，校准后的相位已写入发送队列：{detail}")
 
     def _send_data(self) -> None:
+        """“数据发送”按钮。
+
+        先打印当前队列和完整 HEX，再调用 DeviceController.apply_feed_states()。
+        如果当前是 simulated 模式，会得到模拟 ACK；真实串口模式会写入 COM。
+        """
         if not self.phase_queue:
             QMessageBox.warning(self, "发送失败", "请先执行相位确认或自动校准。")
             self._feedback("发送失败：发送队列为空。")
@@ -431,17 +553,30 @@ class PhaseConfigWindow(QMainWindow):
             QMessageBox.warning(self, "发送失败", response.message)
 
     def _calculate_beam_phases(self) -> dict[int, float]:
-        theta = self.theta_spin.value()
-        phi0 = self.phi_spin.value()
-        spacing_mm = 15.52
-        wavelength_mm = 300.0 / self.output_freq_spin.value()
-        base = -360.0 * spacing_mm * sin(theta * pi / 180.0) / wavelength_mm
+        """按波束指向角计算四个馈源相位。
+
+        θ0 界面输入单位为 deg，这里先换算为 rad 再进入 sin()。
+        返回值已经按 0~360 deg 取模；φ0 当前不参与计算。
+        """
+        frequency_hz = self.output_freq_spin.value() * GHZ_TO_HZ
+        theta_rad = self.theta_spin.value() * pi / 180.0
+        base = (
+            -(2.0 * pi * frequency_hz / LIGHT_SPEED_MPS)
+            * sin(theta_rad)
+            * FEED_SPACING_M
+            * (180.0 / pi)
+        )
         return {
-            feed_id: (phi0 + base * (feed_id - 1)) % 360.0
+            feed_id: (base * (feed_id - 1)) % 360.0
             for feed_id in (1, 2, 3, 4)
         }
 
     def _set_source_state(self, source: str, enabled: bool) -> None:
+        """维护本振/中频按钮的 UI 状态。
+
+        当前只做界面反馈，不向下位机发送独立开关命令；如果以后增加源控制命令，
+        可从这里接入 DeviceController。
+        """
         if source == "lo":
             if self.lo_enabled == enabled:
                 self._set_toggle_pair(self.lo_on_btn if enabled else self.lo_off_btn, self.lo_off_btn if enabled else self.lo_on_btn)
@@ -461,12 +596,17 @@ class PhaseConfigWindow(QMainWindow):
         self._feedback("中频开启。" if enabled else "中频关闭。")
 
     def _build_phase_queue(self, phases: dict[int, float]) -> list[FeedState]:
+        """把相位字典转换为下发队列。
+
+        所有相位统一按 0~360 deg 取模，并默认四个馈源都 enabled。
+        """
         return [
             FeedState(feed_id=feed_id, phase_deg=phase % 360.0, amplitude=DEFAULTS.default_amplitude, enabled=True)
             for feed_id, phase in sorted(phases.items())
         ]
 
     def _format_queue_payload(self) -> str:
+        """格式化当前 phase_queue，供信息反馈窗展示。"""
         lines = []
         for state in self.phase_queue:
             lines.append(
@@ -476,6 +616,11 @@ class PhaseConfigWindow(QMainWindow):
         return "\n".join(lines)
 
     def _apply_calibration_offsets(self, desired_phases: dict[int, float]) -> tuple[dict[int, float], list[int]]:
+        """叠加 UI0 校准结果中的最佳相位偏移。
+
+        desired_phases 表示用户或波束公式期望的相位；read_best_feed_point()
+        读取的是各馈源校准时找到的最佳偏移。缺少表时返回 missing 列表。
+        """
         calibrated: dict[int, float] = {}
         missing: list[int] = []
         for feed_id, desired_phase in desired_phases.items():
@@ -488,9 +633,11 @@ class PhaseConfigWindow(QMainWindow):
         return calibrated, missing
 
     def _has_required_basic(self) -> bool:
+        """相位确认前至少要求输出频率有效，因为波束配相需要 f。"""
         return self._read_required_spins(((self.output_freq_spin, "输出频率"),)) is not None
 
     def _basic_inputs_are_default(self) -> bool:
+        """判断基础设置是否仍为默认值，用于避免重复重设时切换按钮状态异常。"""
         return (
             self._spin_has_value(self.output_freq_spin, DEFAULTS.frequency_ghz)
             and self._spin_has_value(self.basic_lo_power_spin, -20.0)
@@ -498,17 +645,24 @@ class PhaseConfigWindow(QMainWindow):
         )
 
     def _phase_inputs_are_default(self) -> bool:
+        """判断相位区是否仍为默认值。"""
         return (
-            all(self._spin_has_value(spin, 30.0) for spin in self.feed_phase_spins.values())
-            and self._spin_has_value(self.theta_spin, 20.0)
+            all(self._spin_has_value(spin, DEFAULT_FEED_PHASE_DEG) for spin in self.feed_phase_spins.values())
+            and self._spin_has_value(self.theta_spin, DEFAULT_BEAM_THETA_DEG)
             and self._spin_has_value(self.phi_spin, 0.0)
             and not self.beam_checkbox.isChecked()
         )
 
     def _spin_has_value(self, spin: QDoubleSpinBox, value: float) -> bool:
+        """同时检查输入框非空和值相等，避免空文本被 value() 当成 0 误判。"""
         return bool(spin.lineEdit().text().strip()) and abs(spin.value() - value) < 1e-9
 
     def _read_required_spins(self, fields: tuple[tuple[QDoubleSpinBox, str], ...]) -> tuple[float, ...] | None:
+        """读取一组必填数值框。
+
+        QDoubleSpinBox 被用户清空文本时 value() 仍可能返回旧值，所以这里先检查
+        lineEdit 文本是否为空。
+        """
         values: list[float] = []
         for spin, label in fields:
             if not spin.lineEdit().text().strip():
@@ -519,8 +673,10 @@ class PhaseConfigWindow(QMainWindow):
         return tuple(values)
 
     def _set_toggle_pair(self, active: QPushButton, inactive: QPushButton) -> None:
+        """维护成对按钮的 checked 视觉状态。"""
         active.setChecked(True)
         inactive.setChecked(False)
 
     def _feedback(self, text: str) -> None:
+        """向底部信息反馈窗追加一行文本。"""
         self.feedback_edit.append(text)

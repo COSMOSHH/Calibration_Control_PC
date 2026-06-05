@@ -10,6 +10,12 @@ from ..utils import dbm_to_uw, uw_to_dbm
 
 
 class SpectrumAnalyzer(Protocol):
+    """频谱仪抽象接口。
+
+    CalibrationEngine 只依赖这个接口，因此 UI0 可以在 simulated 和 VISA 实机之间
+    切换，而不影响扫描主流程。
+    """
+
     def connect(self) -> None:
         ...
 
@@ -27,24 +33,40 @@ class SpectrumAnalyzer(Protocol):
 
 
 class SimulatedSpectrumAnalyzer:
+    """无频谱仪时使用的模拟读数源。
+
+    模拟器会给每个目标馈源设置一个“理想相位”，扫描到接近该相位时功率更高。
+    这样 UI0 的扫描、最佳点选择、Excel 标红都能在没有仪器的情况下验证。
+    """
+
     def __init__(self, address: str = "SIMULATED") -> None:
         self.address = address
         self._connected = False
+        # 固定随机种子保证调试时每次运行的模拟曲线大致一致。
         self._rng = random.Random(504)
 
     def connect(self) -> None:
+        """模拟连接成功。"""
         self._connected = True
 
     def disconnect(self) -> None:
+        """模拟断开连接。"""
         self._connected = False
 
     def is_connected(self) -> bool:
+        """返回模拟连接状态。"""
         return self._connected
 
     def read_identity(self) -> str:
+        """返回类似 *IDN? 的设备身份字符串。"""
         return "SIMULATED,THZ-SPECTRUM,0000,0.1"
 
     def read_peak_power_dbm(self, context: MeasurementContext | None = None) -> float:
+        """返回一个模拟峰值功率。
+
+        context 为空时返回普通噪声读数；有 context 时按当前扫描相位与理想相位的
+        接近程度生成相干增强效果。
+        """
         if not self._connected:
             raise RuntimeError("simulated spectrum analyzer is not connected")
 
@@ -57,8 +79,10 @@ class SimulatedSpectrumAnalyzer:
             3: 202.5,
             4: 281.25,
         }.get(context.target_feed_id, 0.0)
+        # 用 cos 曲线模拟相位接近最佳点时功率升高，范围归一化到 0~1。
         delta_rad = math.radians((context.phase_deg - ideal_phase) % 360.0)
         coherence = (1.0 + math.cos(delta_rad)) / 2.0
+        # 打开的馈源越多，基础功率越高，便于模拟逐步加入馈源的校准流程。
         active_count = sum(1 for feed in context.feed_states if feed.enabled)
         baseline_uw = 16.0 * max(active_count, 1)
         power_uw = baseline_uw * (0.35 + 0.65 * coherence)
@@ -67,6 +91,12 @@ class SimulatedSpectrumAnalyzer:
 
 
 class VisaSpectrumAnalyzer:
+    """真实频谱仪 VISA/SCPI 访问实现。
+
+    当前只实现“寻找最大 marker 并读取 Y 值”的最小闭环。如果换仪器型号或 SCPI
+    命令不兼容，优先修改 read_peak_power_dbm()。
+    """
+
     def __init__(self, address: str, timeout_ms: int = 5000) -> None:
         self.address = address
         self.timeout_ms = timeout_ms
@@ -74,6 +104,7 @@ class VisaSpectrumAnalyzer:
         self._instrument = None
 
     def connect(self) -> None:
+        """创建 pyvisa ResourceManager 并打开指定资源。"""
         try:
             import pyvisa
         except ImportError as exc:
@@ -84,6 +115,7 @@ class VisaSpectrumAnalyzer:
         self._instrument.timeout = self.timeout_ms
 
     def disconnect(self) -> None:
+        """关闭仪器和资源管理器，避免 VISA 句柄泄漏。"""
         if self._instrument is not None:
             self._instrument.close()
             self._instrument = None
@@ -92,17 +124,22 @@ class VisaSpectrumAnalyzer:
             self._rm = None
 
     def is_connected(self) -> bool:
+        """VISA 资源对象存在即认为已连接。"""
         return self._instrument is not None
 
     def read_identity(self) -> str:
+        """读取仪器 *IDN?，用于联调时确认连接的是目标设备。"""
         if self._instrument is None:
             raise RuntimeError("VISA instrument is not connected")
         return self._instrument.query("*IDN?").strip()
 
     def read_peak_power_dbm(self, context: MeasurementContext | None = None) -> float:
+        """让 marker 跳到当前最大峰值，并读取 marker Y 值。
+
+        context 当前不参与真实仪器命令，只作为接口兼容保留。
+        """
         if self._instrument is None:
             raise RuntimeError("VISA instrument is not connected")
         self._instrument.write("CALCulate:MARKer1:MAXimum")
         time.sleep(0.1)
         return float(self._instrument.query("CALCulate:MARKer1:Y?"))
-

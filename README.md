@@ -3,9 +3,9 @@
 本项目是太赫兹四馈源阵列相位校准上位机，第一版使用 Python + PySide6。当前有两套独立界面：
 
 - `UI0`：馈源间相位校准数据测试窗口，用于 Feed1~Feed4 依次测试、自动扫描、保存 Excel。
-- `UI1`：馈源阵输出相位配置窗口，用于手动配置 Feed1~Feed4 相位并下发给 STM32。
+- `UI1`：馈源阵输出相位配置窗口，用于手动配置 Feed1~Feed4 相位，或通过波束指向角自动配相并下发给 STM32。
 
-当前上位机到 STM32 的协议只发送 `feed_id`、`phase_deg`、`enabled`。幅值不发送；波束指向角用于转台电机/实验记录，当前也不发送给 STM32。
+当前上位机到 STM32 的协议只发送 `feed_id`、`phase_deg`、`enabled`。幅值不发送；UI1 的波束指向角只在上位机侧用于计算四个馈源相位，不发送给 STM32。
 
 ## 启动
 
@@ -48,6 +48,8 @@ python run_app.py --config --serial-port COM3
 | 频谱仪 VISA 地址 | `TCPIP::10.18.18.2::INSTR` |
 | 测试频点 | 212 GHz |
 | 波束指向角 | 30 deg |
+| UI1 波束配相 θ₀ 默认值 | 0 deg |
+| UI1 馈源相位配置默认值 | 0 deg |
 | 相位范围 | 0 deg 到 354.375 deg |
 | 相位步长 | 5.625 deg |
 | 每点稳定等待 | 500 ms |
@@ -88,7 +90,7 @@ Calibration_Control_PC/
 │  │  └─ simulated.py                 # 模拟 STM32 ACK，便于无硬件调试
 │  └─ ui/
 │     ├─ calibration_test_window.py    # UI0 主窗口；Feed1~4 测试按钮和全局设置
-│     ├─ phase_config_window.py        # UI1 主窗口；手动相位配置、串口连接、数据发送
+│     ├─ phase_config_window.py        # UI1 主窗口；手动/波束指向配相、串口连接、数据发送
 │     ├─ common.py                     # UI 共用控件工厂、串口枚举、锁定控件
 │     └─ style.py                      # 全局 QSS 样式
 ├─ docs/
@@ -115,7 +117,7 @@ Calibration_Control_PC/
 | `engine.py` | 校准扫描主流程 | 改逐点发送逻辑、稳定等待、采样策略、终端日志 |
 | `excel_exporter.py` | Excel 导出和最佳点读取 | 改模板单元格、最终汇总表、输出文件名 |
 | `calibration_test_window.py` | UI0 界面和按钮逻辑 | 改校准界面布局、按钮流程、Feed1~4 扫描入口 |
-| `phase_config_window.py` | UI1 手动配置界面 | 改手动相位配置、串口连接、数据发送反馈 |
+| `phase_config_window.py` | UI1 相位配置界面 | 改手动相位配置、波束指向配相、串口连接、数据发送反馈 |
 | `common.py` | UI 共用小工具 | 改输入框、数字框、串口列表等共用控件 |
 | `style.py` | UI 样式 | 改整体视觉、控件尺寸、颜色 |
 
@@ -167,6 +169,21 @@ run_config_ui.py
 
 UI1 的“数据发送”会在界面信息反馈窗打印每个 Feed 的相位、使能状态、完整 HEX 帧和发送结果。
 
+UI1 支持两种相位配置方式：
+
+- 未勾选“通过波束指向配相”时，Feed1~Feed4 的相位输入框可手动配置，`θ₀` 输入框禁用。
+- 勾选“通过波束指向配相”时，Feed1~Feed4 的相位输入框禁用，`θ₀` 输入框启用，并由上位机按波束指向角计算四个相位。
+- `φ₀` 输入框可编辑，但当前不参与计算、不影响下发；默认值为 `0`。
+
+波束指向配相的界面输入 `θ₀` 单位为 `deg`，程序计算时会先转换为 `rad`，输入不限制在 ±180°；输出相位单位为 `deg`，界面和下发数据按 `0~360 deg` 范围取模。计算公式如下，其中 `f` 来自 UI1 的输出频率并换算为 Hz，`c = 3 × 10^8 m/s`，`d = 15.52 × 10^-3 m`：
+
+```text
+φ1 = 0
+φ2 = -(2πf / c) · sin(θ0) · d  · 180/π
+φ3 = -(2πf / c) · sin(θ0) · 2d · 180/π
+φ4 = -(2πf / c) · sin(θ0) · 3d · 180/π
+```
+
 ## STM32 发送协议
 
 当前主要命令为 `SET_FEEDS`，payload 示例：
@@ -181,7 +198,7 @@ UI1 的“数据发送”会在界面信息反馈窗打印每个 Feed 的相位�
 - `phase_deg` 是角度值，不是芯片最终 6-bit code。
 - `enabled=false` 表示该 Feed 当前关闭。
 - 不发送幅值/幅度。
-- 不发送波束指向角。
+- 不发送波束指向角；通过波束指向配相时，也只发送计算后的 `phase_deg`。
 - STM32 负责把 `phase_deg` 转成 IPS-1924-6C / WQD0032H 所需控制位。
 
 完整协议、CRC8、测试 HEX、芯片真值表见 `docs/上位机与STM32通信协议交接说明.md`。
