@@ -94,8 +94,8 @@ class PhaseConfigWindow(QMainWindow):
         group = QGroupBox("基础设置")
         group.setFixedHeight(205)
         layout = QGridLayout(group)
-        layout.setContentsMargins(28, 26, 28, 22)
-        layout.setHorizontalSpacing(32)
+        layout.setContentsMargins(34, 26, 34, 22)
+        layout.setHorizontalSpacing(22)
         layout.setVerticalSpacing(16)
 
         self.basic_reset_btn = QPushButton("重 设")
@@ -136,8 +136,6 @@ class PhaseConfigWindow(QMainWindow):
         self.basic_lo_power_spin = make_spin(-20.0, -100, 30, 3, 96)
         self.basic_if_power_spin = make_spin(-20.0, -100, 30, 3, 96)
 
-        output_column = self._field_pair("输出频率（GHz）", self.output_freq_spin, 250, label_width=112)
-
         serial_panel = QWidget()
         serial_layout = QGridLayout(serial_panel)
         serial_layout.setContentsMargins(0, 0, 0, 0)
@@ -148,31 +146,20 @@ class PhaseConfigWindow(QMainWindow):
         serial_layout.addWidget(self.refresh_serial_btn, 0, 2)
         serial_layout.addWidget(self.serial_btn, 1, 1, 1, 2, Qt.AlignLeft)
 
-        lo_field = self._field_pair("本振源功率（dBm）", self.basic_lo_power_spin, 286, label_width=146)
-        if_field = self._field_pair("中频源功率（dBm）", self.basic_if_power_spin, 286, label_width=146)
+        output_column = self._basic_param_column("输出频率（GHz）", self.output_freq_spin, self.basic_confirm_btn)
+        lo_column = self._basic_param_column("本振源功率（dBm）", self.basic_lo_power_spin, self.lo_on_btn, self.lo_off_btn)
+        if_column = self._basic_param_column("中频源功率（dBm）", self.basic_if_power_spin, self.if_on_btn, self.if_off_btn)
+        reset_column = self._basic_button_column(self.basic_reset_btn)
 
-        lo_buttons = self._button_row(self.lo_on_btn, self.lo_off_btn)
-        if_buttons = self._button_row(self.if_on_btn, self.if_off_btn)
-
-        param_panel = QWidget()
-        param_layout = QGridLayout(param_panel)
-        param_layout.setContentsMargins(0, 0, 0, 0)
-        param_layout.setHorizontalSpacing(58)
-        param_layout.setVerticalSpacing(18)
-        param_layout.addWidget(output_column, 0, 0, Qt.AlignLeft)
-        param_layout.addWidget(lo_field, 0, 1, Qt.AlignLeft)
-        param_layout.addWidget(if_field, 0, 2, Qt.AlignLeft)
-        param_layout.addWidget(self.basic_confirm_btn, 1, 0, Qt.AlignLeft)
-        param_layout.addWidget(lo_buttons, 1, 1, Qt.AlignLeft)
-        param_layout.addWidget(if_buttons, 1, 2, Qt.AlignLeft)
-
-        layout.addWidget(self.basic_reset_btn, 0, 0, Qt.AlignLeft)
-        layout.addWidget(param_panel, 1, 0, 1, 3, Qt.AlignLeft)
+        layout.addWidget(reset_column, 0, 0, Qt.AlignHCenter)
+        layout.addWidget(output_column, 1, 0, Qt.AlignHCenter)
+        layout.addWidget(lo_column, 1, 1, Qt.AlignHCenter)
+        layout.addWidget(if_column, 1, 2, Qt.AlignHCenter)
         layout.addWidget(serial_panel, 0, 3, 2, 1, Qt.AlignTop | Qt.AlignRight)
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(2, 1)
-        layout.setColumnStretch(3, 0)
+        layout.setColumnStretch(3, 1)
 
         self.lo_on_btn.clicked.connect(lambda: self._set_source_state("lo", True))
         self.lo_off_btn.clicked.connect(lambda: self._set_source_state("lo", False))
@@ -186,14 +173,44 @@ class PhaseConfigWindow(QMainWindow):
         ]
         return group
 
-    def _button_row(self, left_button: QPushButton, right_button: QPushButton) -> QWidget:
+    def _basic_param_column(self, label_text: str, editor: QWidget, *buttons: QPushButton) -> QWidget:
+        """创建基础设置区的一列参数，让标签、输入框和按钮共享同一左边界。"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(36)
+        layout.addWidget(
+            self._field_pair(
+                label_text,
+                editor,
+                250,
+                label_width=118,
+                label_alignment=Qt.AlignLeft | Qt.AlignVCenter,
+            )
+        )
+        layout.addWidget(self._button_row(*buttons), alignment=Qt.AlignLeft)
+        widget.setFixedWidth(250)
+        return widget
+
+    def _basic_button_column(self, button: QPushButton) -> QWidget:
+        """创建和基础参数列同宽的单按钮容器，用来对齐重设/确认。"""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(button)
+        layout.addStretch(1)
+        widget.setFixedWidth(250)
+        return widget
+
+    def _button_row(self, *buttons: QPushButton) -> QWidget:
         """创建一行并排按钮，供基础设置区复用。"""
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-        layout.addWidget(left_button)
-        layout.addWidget(right_button)
+        for button in buttons:
+            layout.addWidget(button)
+        layout.addStretch(1)
         return widget
 
     def _basic_column(
@@ -285,10 +302,24 @@ class PhaseConfigWindow(QMainWindow):
         # θ0 或频率变化时，若处于波束配相模式，立即刷新四个相位显示值。
         self.theta_spin.valueChanged.connect(self._update_beam_phase_values)
         self.output_freq_spin.valueChanged.connect(self._update_beam_phase_values)
-        theta_pair = self._field_pair("波束指向角度 θ₀（deg）", self.theta_spin, 320, label_width=174)
-        phi_pair = self._field_pair("波束指向角度 φ₀（deg）", self.phi_spin, 320, label_width=174)
-        layout.addWidget(theta_pair, 2, 0, 1, 2, Qt.AlignHCenter)
-        layout.addWidget(phi_pair, 2, 2, 1, 2, Qt.AlignHCenter)
+        theta_pair = self._field_pair(
+            "波束指向角度 θ₀（deg）",
+            self.theta_spin,
+            270,
+            label_width=164,
+            label_alignment=Qt.AlignLeft | Qt.AlignVCenter,
+            label_indent=24,
+        )
+        phi_pair = self._field_pair(
+            "波束指向角度 φ₀（deg）",
+            self.phi_spin,
+            270,
+            label_width=164,
+            label_alignment=Qt.AlignLeft | Qt.AlignVCenter,
+            label_indent=24,
+        )
+        layout.addWidget(theta_pair, 2, 0, Qt.AlignHCenter)
+        layout.addWidget(phi_pair, 2, 2, Qt.AlignHCenter)
 
         layout.addWidget(self.phase_confirm_btn, 3, 0, Qt.AlignLeft)
         layout.addWidget(self.auto_cal_btn, 3, 1, Qt.AlignLeft)
@@ -300,7 +331,15 @@ class PhaseConfigWindow(QMainWindow):
         self._sync_phase_input_availability()
         return group
 
-    def _field_pair(self, label_text: str, editor: QWidget, width: int, label_width: int | None = None) -> QWidget:
+    def _field_pair(
+        self,
+        label_text: str,
+        editor: QWidget,
+        width: int,
+        label_width: int | None = None,
+        label_alignment: Qt.AlignmentFlag = Qt.AlignRight | Qt.AlignVCenter,
+        label_indent: int = 0,
+    ) -> QWidget:
         """创建 UI1 中常用的“标签 + 输入框”横向组合。"""
         widget = QWidget()
         layout = QHBoxLayout(widget)
@@ -309,7 +348,8 @@ class PhaseConfigWindow(QMainWindow):
         label = QLabel(label_text)
         if label_width is not None:
             label.setFixedWidth(label_width)
-            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            label.setAlignment(label_alignment)
+            label.setIndent(label_indent)
         layout.addWidget(label)
         layout.addWidget(editor)
         layout.addStretch(1)
