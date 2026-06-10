@@ -26,13 +26,13 @@ from ..models import FeedState
 from .common import available_serial_ports, lock_widgets, make_spin, set_locked
 from .style import APP_STYLESHEET
 
-
-LIGHT_SPEED_MPS = 3.0e8
-FEED_SPACING_M = 15.52e-3
-GHZ_TO_HZ = 1.0e9
+# 下面这些常量用于波束指向配相计算和默认输入值。
+LIGHT_SPEED_MPS = 3.0e8 # 光速 m/s
+FEED_SPACING_M = 15.52e-3 # 四馈源阵列设计中相邻馈源间距，单位 m；这个值会影响波束配相计算结果。
+GHZ_TO_HZ = 1.0e9 # 输出频率输入单位是 GHz，计算时需要换算成 Hz, 用于频率单位转换。
 # UI1 默认输入值：θ0 和四个馈源相位都从 0 deg 开始。
-DEFAULT_BEAM_THETA_DEG = 0.0
-DEFAULT_FEED_PHASE_DEG = 0.0
+DEFAULT_BEAM_THETA_DEG = 0.0 # 波束指向角 θ0 的默认值；UI0 校准记录里的波束角默认值在 config.py。
+DEFAULT_FEED_PHASE_DEG = 0.0 
 
 
 class PhaseConfigWindow(QMainWindow):
@@ -92,7 +92,11 @@ class PhaseConfigWindow(QMainWindow):
         尚未下发独立硬件命令。
         """
         group = QGroupBox("基础设置")
-        group.setFixedHeight(185)
+        group.setFixedHeight(205)
+        layout = QGridLayout(group)
+        layout.setContentsMargins(28, 26, 28, 22)
+        layout.setHorizontalSpacing(32)
+        layout.setVerticalSpacing(16)
 
         self.basic_reset_btn = QPushButton("重 设")
         self.basic_reset_btn.setFixedWidth(92)
@@ -132,16 +136,7 @@ class PhaseConfigWindow(QMainWindow):
         self.basic_lo_power_spin = make_spin(-20.0, -100, 30, 3, 96)
         self.basic_if_power_spin = make_spin(-20.0, -100, 30, 3, 96)
 
-        output_column = self._field_pair("输出频率（GHz）", self.output_freq_spin, 246)
-        left_column = QWidget()
-        left_layout = QVBoxLayout(left_column)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(24)
-        left_layout.addWidget(self.basic_reset_btn, alignment=Qt.AlignLeft)
-        left_layout.addWidget(output_column, alignment=Qt.AlignLeft)
-        left_layout.addWidget(self.basic_confirm_btn, alignment=Qt.AlignLeft)
-        left_column.setParent(group)
-        left_column.move(28, 28)
+        output_column = self._field_pair("输出频率（GHz）", self.output_freq_spin, 250, label_width=112)
 
         serial_panel = QWidget()
         serial_layout = QGridLayout(serial_panel)
@@ -152,27 +147,32 @@ class PhaseConfigWindow(QMainWindow):
         serial_layout.addWidget(self.serial_combo, 0, 1)
         serial_layout.addWidget(self.refresh_serial_btn, 0, 2)
         serial_layout.addWidget(self.serial_btn, 1, 1, 1, 2, Qt.AlignLeft)
-        serial_panel.setParent(group)
-        serial_panel.move(970, 50)
 
-        lo_column = self._basic_column(
-            "本振源功率（dBm）",
-            self.basic_lo_power_spin,
-            self.lo_on_btn,
-            self.lo_off_btn,
-            286,
-        )
-        if_column = self._basic_column(
-            "中频源功率（dBm）",
-            self.basic_if_power_spin,
-            self.if_on_btn,
-            self.if_off_btn,
-            286,
-        )
-        lo_column.setParent(group)
-        if_column.setParent(group)
-        lo_column.move(360, 64)
-        if_column.move(650, 64)
+        lo_field = self._field_pair("本振源功率（dBm）", self.basic_lo_power_spin, 286, label_width=146)
+        if_field = self._field_pair("中频源功率（dBm）", self.basic_if_power_spin, 286, label_width=146)
+
+        lo_buttons = self._button_row(self.lo_on_btn, self.lo_off_btn)
+        if_buttons = self._button_row(self.if_on_btn, self.if_off_btn)
+
+        param_panel = QWidget()
+        param_layout = QGridLayout(param_panel)
+        param_layout.setContentsMargins(0, 0, 0, 0)
+        param_layout.setHorizontalSpacing(58)
+        param_layout.setVerticalSpacing(18)
+        param_layout.addWidget(output_column, 0, 0, Qt.AlignLeft)
+        param_layout.addWidget(lo_field, 0, 1, Qt.AlignLeft)
+        param_layout.addWidget(if_field, 0, 2, Qt.AlignLeft)
+        param_layout.addWidget(self.basic_confirm_btn, 1, 0, Qt.AlignLeft)
+        param_layout.addWidget(lo_buttons, 1, 1, Qt.AlignLeft)
+        param_layout.addWidget(if_buttons, 1, 2, Qt.AlignLeft)
+
+        layout.addWidget(self.basic_reset_btn, 0, 0, Qt.AlignLeft)
+        layout.addWidget(param_panel, 1, 0, 1, 3, Qt.AlignLeft)
+        layout.addWidget(serial_panel, 0, 3, 2, 1, Qt.AlignTop | Qt.AlignRight)
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(2, 1)
+        layout.setColumnStretch(3, 0)
 
         self.lo_on_btn.clicked.connect(lambda: self._set_source_state("lo", True))
         self.lo_off_btn.clicked.connect(lambda: self._set_source_state("lo", False))
@@ -186,6 +186,16 @@ class PhaseConfigWindow(QMainWindow):
         ]
         return group
 
+    def _button_row(self, left_button: QPushButton, right_button: QPushButton) -> QWidget:
+        """创建一行并排按钮，供基础设置区复用。"""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        layout.addWidget(left_button)
+        layout.addWidget(right_button)
+        return widget
+
     def _basic_column(
         self,
         label_text: str,
@@ -193,13 +203,14 @@ class PhaseConfigWindow(QMainWindow):
         left_button: QPushButton | None,
         right_button: QPushButton | None,
         width: int,
+        label_width: int = 146,
     ) -> QWidget:
         """基础设置区里“功率输入 + 开关按钮”的复用布局。"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        layout.addWidget(self._field_pair(label_text, editor, width))
+        layout.addWidget(self._field_pair(label_text, editor, width, label_width=label_width))
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
         button_row.setSpacing(12)
@@ -218,12 +229,12 @@ class PhaseConfigWindow(QMainWindow):
         手动模式下四个馈源相位可编辑，θ0 禁用；波束配相模式下四个相位由公式
         自动计算，θ0 启用，φ0 只作为可编辑占位输入，不参与计算。
         """
-        group = QGroupBox("")
-        group.setFixedHeight(310)
+        group = QGroupBox("相位/波束设置")
+        group.setFixedHeight(338)
         layout = QGridLayout(group)
-        layout.setContentsMargins(34, 22, 34, 18)
-        layout.setHorizontalSpacing(20)
-        layout.setVerticalSpacing(20)
+        layout.setContentsMargins(34, 28, 34, 24)
+        layout.setHorizontalSpacing(22)
+        layout.setVerticalSpacing(16)
 
         self.initial_sync_btn = QPushButton("初始同步")
         self.phase_reset_btn = QPushButton("相位重设")
@@ -231,6 +242,14 @@ class PhaseConfigWindow(QMainWindow):
         self.phase_confirm_btn = QPushButton("相位确认")
         self.auto_cal_btn = QPushButton("自动校准")
         self.data_send_btn = QPushButton("数据发送")
+        for button in (
+            self.initial_sync_btn,
+            self.phase_reset_btn,
+            self.phase_confirm_btn,
+            self.auto_cal_btn,
+            self.data_send_btn,
+        ):
+            button.setFixedWidth(264)
         self.phase_reset_btn.setCheckable(True)
         self.phase_confirm_btn.setCheckable(True)
 
@@ -241,9 +260,9 @@ class PhaseConfigWindow(QMainWindow):
         self.auto_cal_btn.clicked.connect(self._auto_calibrate)
         self.data_send_btn.clicked.connect(self._send_data)
 
-        layout.addWidget(self.initial_sync_btn, 0, 0)
-        layout.addWidget(self.phase_reset_btn, 1, 0)
-        layout.addWidget(self.beam_checkbox, 1, 1)
+        layout.addWidget(self.initial_sync_btn, 0, 0, Qt.AlignLeft)
+        layout.addWidget(self.phase_reset_btn, 0, 1, Qt.AlignLeft)
+        layout.addWidget(self.beam_checkbox, 0, 2, 1, 2, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.feed_phase_spins = {}
         for index, feed_id in enumerate((1, 2, 3, 4)):
@@ -257,8 +276,8 @@ class PhaseConfigWindow(QMainWindow):
             phase_spin = make_spin(DEFAULT_FEED_PHASE_DEG, 0, 360, 3, 96)
             self.feed_phase_spins[feed_id] = phase_spin
             feed_layout.addWidget(feed_label)
-            feed_layout.addWidget(self._field_pair("相位配置（deg）", phase_spin, 250))
-            layout.addWidget(feed_box, 2, index, Qt.AlignHCenter)
+            feed_layout.addWidget(self._field_pair("相位配置（deg）", phase_spin, 250, label_width=118))
+            layout.addWidget(feed_box, 1, index, Qt.AlignHCenter)
             layout.setColumnStretch(index, 1)
 
         self.theta_spin = make_spin(DEFAULT_BEAM_THETA_DEG, -9999, 9999, 3, 96)
@@ -266,24 +285,31 @@ class PhaseConfigWindow(QMainWindow):
         # θ0 或频率变化时，若处于波束配相模式，立即刷新四个相位显示值。
         self.theta_spin.valueChanged.connect(self._update_beam_phase_values)
         self.output_freq_spin.valueChanged.connect(self._update_beam_phase_values)
-        layout.addWidget(self._field_pair("波束指向角度 θ₀（deg）", self.theta_spin, 300), 4, 0, 1, 2)
-        layout.addWidget(self._field_pair("波束指向角度 φ₀（deg）", self.phi_spin, 300), 4, 2, 1, 2)
+        theta_pair = self._field_pair("波束指向角度 θ₀（deg）", self.theta_spin, 320, label_width=174)
+        phi_pair = self._field_pair("波束指向角度 φ₀（deg）", self.phi_spin, 320, label_width=174)
+        layout.addWidget(theta_pair, 2, 0, 1, 2, Qt.AlignHCenter)
+        layout.addWidget(phi_pair, 2, 2, 1, 2, Qt.AlignHCenter)
 
-        layout.addWidget(self.phase_confirm_btn, 5, 0)
-        layout.addWidget(self.auto_cal_btn, 5, 1)
-        layout.addWidget(self.data_send_btn, 5, 2)
+        layout.addWidget(self.phase_confirm_btn, 3, 0, Qt.AlignLeft)
+        layout.addWidget(self.auto_cal_btn, 3, 1, Qt.AlignLeft)
+        layout.addWidget(self.data_send_btn, 3, 2, Qt.AlignLeft)
+        layout.setRowMinimumHeight(4, 20)
+        layout.setRowStretch(4, 1)
 
         self.phase_inputs = list(self.feed_phase_spins.values()) + [self.theta_spin, self.phi_spin, self.beam_checkbox]
         self._sync_phase_input_availability()
         return group
 
-    def _field_pair(self, label_text: str, editor: QWidget, width: int) -> QWidget:
+    def _field_pair(self, label_text: str, editor: QWidget, width: int, label_width: int | None = None) -> QWidget:
         """创建 UI1 中常用的“标签 + 输入框”横向组合。"""
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
         label = QLabel(label_text)
+        if label_width is not None:
+            label.setFixedWidth(label_width)
+            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         layout.addWidget(label)
         layout.addWidget(editor)
         layout.addStretch(1)
@@ -558,7 +584,7 @@ class PhaseConfigWindow(QMainWindow):
         θ0 界面输入单位为 deg，这里先换算为 rad 再进入 sin()。
         返回值已经按 0~360 deg 取模；φ0 当前不参与计算。
         """
-        frequency_hz = self.output_freq_spin.value() * GHZ_TO_HZ
+        frequency_hz = self.output_freq_spin.value() * GHZ_TO_HZ # 输出频率输入单位是 GHz，计算时需要换算成 Hz。
         theta_rad = self.theta_spin.value() * pi / 180.0
         base = (
             -(2.0 * pi * frequency_hz / LIGHT_SPEED_MPS)
