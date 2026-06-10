@@ -146,7 +146,12 @@ class PhaseConfigWindow(QMainWindow):
         serial_layout.addWidget(self.refresh_serial_btn, 0, 2)
         serial_layout.addWidget(self.serial_btn, 1, 1, 1, 2, Qt.AlignLeft)
 
-        output_column = self._basic_param_column("输出频率（GHz）", self.output_freq_spin, self.basic_confirm_btn)
+        output_column = self._basic_param_column(
+            "输出频率（GHz）",
+            self.output_freq_spin,
+            self.basic_confirm_btn,
+            label_alignment=Qt.AlignRight | Qt.AlignVCenter,
+        )
         lo_column = self._basic_param_column("本振源功率（dBm）", self.basic_lo_power_spin, self.lo_on_btn, self.lo_off_btn)
         if_column = self._basic_param_column("中频源功率（dBm）", self.basic_if_power_spin, self.if_on_btn, self.if_off_btn)
         reset_column = self._basic_button_column(self.basic_reset_btn)
@@ -173,7 +178,13 @@ class PhaseConfigWindow(QMainWindow):
         ]
         return group
 
-    def _basic_param_column(self, label_text: str, editor: QWidget, *buttons: QPushButton) -> QWidget:
+    def _basic_param_column(
+        self,
+        label_text: str,
+        editor: QWidget,
+        *buttons: QPushButton,
+        label_alignment: Qt.AlignmentFlag = Qt.AlignLeft | Qt.AlignVCenter,
+    ) -> QWidget:
         """创建基础设置区的一列参数，让标签、输入框和按钮共享同一左边界。"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -185,7 +196,7 @@ class PhaseConfigWindow(QMainWindow):
                 editor,
                 250,
                 label_width=118,
-                label_alignment=Qt.AlignLeft | Qt.AlignVCenter,
+                label_alignment=label_alignment,
             )
         )
         layout.addWidget(self._button_row(*buttons), alignment=Qt.AlignLeft)
