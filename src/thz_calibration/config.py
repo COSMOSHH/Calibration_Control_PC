@@ -9,6 +9,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 DOCS_DIR = ROOT_DIR / "docs"
 TEMPLATE_DIR = DOCS_DIR / "馈源间相位校准数据保存格式"
 OUTPUT_DIR = ROOT_DIR / "output"
+FREQUENCY_PLAN_PATH = DOCS_DIR / "说明文档" / "中频和本振频率核算表.xlsx"
 
 # 设备模式选项 - "simulated" 使用模拟设备，"serial" 使用实际的STM32串口通信。
 DEVICE_MODE_SIMULATED = "simulated"
@@ -17,6 +18,10 @@ DEVICE_MODE_SERIAL = "serial"
 # 频谱分析仪模式选项 - "simulated" 使用模拟频谱分析仪，"visa" 使用实际的pyvisa频谱分析仪访问。
 SPECTRUM_MODE_SIMULATED = "simulated"
 SPECTRUM_MODE_VISA = "visa"
+
+# 信号源控制模式选项 - "manual" 使用手动控制，"auto" 使用自动控制。
+SIGNAL_SOURCE_CONTROL_MANUAL = "manual"
+SIGNAL_SOURCE_CONTROL_AUTO = "auto"
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,12 @@ class AppDefaults:
     spectrum_analyzer_mode: str = SPECTRUM_MODE_SIMULATED
     # pyvisa 资源地址，实机联调频谱仪连接失败时优先检查这里。
     visa_address: str = "TCPIP::10.18.18.2::INSTR"
+    # 信号源默认手动控制，避免无仪器或地址未配置时误下发 VISA/SCPI 命令。
+    signal_source_control_mode: str = SIGNAL_SOURCE_CONTROL_MANUAL
+    lo_signal_source_visa_address: str = "TCPIP::0.0.0.0::INSTR"
+    if_signal_source_visa_address: str = "TCPIP::0.0.0.0::INSTR"
+    signal_source_timeout_ms: int = 5000
+    signal_source_frequency_plan_path: Path = FREQUENCY_PLAN_PATH
     # UI0/模拟频谱仪使用的默认测试频点，UI1 也默认用它计算波束配相。
     frequency_ghz: float = 212.0
     # UI0 校准记录里的波束角默认值；UI1 的 θ0 默认值在 phase_config_window.py。
@@ -104,3 +115,29 @@ def create_spectrum_analyzer(mode: str | None = None):
         return VisaSpectrumAnalyzer(DEFAULTS.visa_address)
 
     return SimulatedSpectrumAnalyzer(DEFAULTS.visa_address)
+
+
+def create_signal_source_controller(mode: str | None = None):
+    """Create the dual signal-source controller when automatic control is enabled."""
+    from .instruments import SignalSourceController, VisaSignalGenerator
+
+    selected = _normalize_mode(
+        "signal_source_control_mode",
+        mode or DEFAULTS.signal_source_control_mode,
+        (SIGNAL_SOURCE_CONTROL_MANUAL, SIGNAL_SOURCE_CONTROL_AUTO),
+    )
+    if selected == SIGNAL_SOURCE_CONTROL_MANUAL:
+        return None
+
+    return SignalSourceController(
+        lo_source=VisaSignalGenerator(
+            "LO",
+            DEFAULTS.lo_signal_source_visa_address,
+            DEFAULTS.signal_source_timeout_ms,
+        ),
+        if_source=VisaSignalGenerator(
+            "IF",
+            DEFAULTS.if_signal_source_visa_address,
+            DEFAULTS.signal_source_timeout_ms,
+        ),
+    )

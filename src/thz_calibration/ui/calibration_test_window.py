@@ -19,8 +19,17 @@ from PySide6.QtWidgets import (
 )
 
 from ..calibration import CalibrationEngine
-from ..config import DEFAULTS, DEVICE_MODE_SERIAL, OUTPUT_DIR, create_device_controller, create_spectrum_analyzer
-from ..data import ExcelExporter
+from ..config import (
+    DEFAULTS,
+    DEVICE_MODE_SERIAL,
+    OUTPUT_DIR,
+    SIGNAL_SOURCE_CONTROL_AUTO,
+    SIGNAL_SOURCE_CONTROL_MANUAL,
+    create_device_controller,
+    create_signal_source_controller,
+    create_spectrum_analyzer,
+)
+from ..data import ExcelExporter, FrequencyPlan
 from ..models import FeedState, ScanConfig, default_feed_states
 from .common import available_serial_ports, lock_widgets, make_line, make_spin
 from .style import APP_STYLESHEET
@@ -55,6 +64,7 @@ class CalibrationTestWindow(QMainWindow):
         self.analyzer = create_spectrum_analyzer()
         self.device.connect()
         self.analyzer.connect()
+        self.signal_source_controller = None
         # CalibrationEngine 是 UI0 的扫描执行器，UI 只负责收集参数和保存结果。
         self.engine = CalibrationEngine(self.device, self.analyzer)
 
@@ -306,6 +316,7 @@ class CalibrationTestWindow(QMainWindow):
         频率/波束角/保存目录改变后，历史最佳相位可能不再适用，所以从 Feed1
         开始清空 best_feed_phases。
         """
+        self._disconnect_signal_sources(suppress_errors=True)
         self.freq_spin.setValue(DEFAULTS.frequency_ghz)
         self.lo_power_spin.setValue(-20.0)
         self.if_power_spin.setValue(-20.0)
@@ -322,8 +333,67 @@ class CalibrationTestWindow(QMainWindow):
         """
         self.output_dir = Path(self.save_dir_edit.text())
         self.exporter = ExcelExporter(output_dir=self.output_dir)
+        try:
+            signal_source_text = self._prepare_signal_sources()
+        except Exception as exc:
+            QMessageBox.warning(self, "信号源控制失败", str(exc))
+            return
         lock_widgets(self.global_inputs, True)
-        self._message("全局设置已确认。")
+        self._message(f"全局设置已确认。\n\n{signal_source_text}")
+
+    def _prepare_signal_sources(self) -> str:
+        frequencies = FrequencyPlan(DEFAULTS.signal_source_frequency_plan_path).lookup(self.freq_spin.value())
+        lo_power_dbm = self.lo_power_spin.value()
+        if_power_dbm = self.if_power_spin.value()
+        settings_text = (
+            f"本振源：{frequencies.lo_frequency_ghz:.9g} GHz，{lo_power_dbm:g} dBm\n"
+            f"中频源：{frequencies.if_frequency_ghz:.9g} GHz，{if_power_dbm:g} dBm"
+        )
+
+        mode = DEFAULTS.signal_source_control_mode.strip().lower()
+        if mode == SIGNAL_SOURCE_CONTROL_MANUAL:
+            self._disconnect_signal_sources(suppress_errors=True)
+            return f"信号源手动控制模式，未下发仪器命令。\n请手动设置：\n{settings_text}"
+        if mode != SIGNAL_SOURCE_CONTROL_AUTO:
+            raise ValueError(
+                "signal_source_control_mode must be one of: "
+                f"{SIGNAL_SOURCE_CONTROL_MANUAL}, {SIGNAL_SOURCE_CONTROL_AUTO}"
+            )
+
+        self._disconnect_signal_sources()
+        controller = create_signal_source_controller()
+        if controller is None:
+            return f"信号源手动控制模式，未下发仪器命令。\n请手动设置：\n{settings_text}"
+
+        try:
+            controller.connect()
+            controller.configure_sources(
+                lo_frequency_ghz=frequencies.lo_frequency_ghz,
+                lo_power_dbm=lo_power_dbm,
+                if_frequency_ghz=frequencies.if_frequency_ghz,
+                if_power_dbm=if_power_dbm,
+                output_enabled=True,
+            )
+        except Exception:
+            try:
+                controller.disconnect()
+            except Exception:
+                pass
+            raise
+
+        self.signal_source_controller = controller
+        return f"信号源自动控制已下发。\n{settings_text}"
+
+    def _disconnect_signal_sources(self, suppress_errors: bool = False) -> None:
+        if self.signal_source_controller is None:
+            return
+        try:
+            self.signal_source_controller.disconnect()
+        except Exception:
+            if not suppress_errors:
+                raise
+        finally:
+            self.signal_source_controller = None
 
     def _browse_output(self) -> None:
         """选择 Excel 输出目录。"""
@@ -471,3 +541,7 @@ class CalibrationTestWindow(QMainWindow):
     def _message(self, text: str) -> None:
         """UI0 统一信息提示入口。"""
         QMessageBox.information(self, "提示", text)
+
+    def closeEvent(self, event) -> None:
+        self._disconnect_signal_sources(suppress_errors=True)
+        super().closeEvent(event)
