@@ -146,12 +146,7 @@ class PhaseConfigWindow(QMainWindow):
         serial_layout.addWidget(self.refresh_serial_btn, 0, 2)
         serial_layout.addWidget(self.serial_btn, 1, 1, 1, 2, Qt.AlignLeft)
 
-        output_column = self._basic_param_column(
-            "输出频率（GHz）",
-            self.output_freq_spin,
-            self.basic_confirm_btn,
-            label_alignment=Qt.AlignRight | Qt.AlignVCenter,
-        )
+        output_column = self._basic_param_column("输出频率（GHz）", self.output_freq_spin, self.basic_confirm_btn)
         lo_column = self._basic_param_column("本振源功率（dBm）", self.basic_lo_power_spin, self.lo_on_btn, self.lo_off_btn)
         if_column = self._basic_param_column("中频源功率（dBm）", self.basic_if_power_spin, self.if_on_btn, self.if_off_btn)
         reset_column = self._basic_button_column(self.basic_reset_btn)
@@ -319,7 +314,7 @@ class PhaseConfigWindow(QMainWindow):
             270,
             label_width=164,
             label_alignment=Qt.AlignLeft | Qt.AlignVCenter,
-            label_indent=24,
+            label_indent=0,
         )
         phi_pair = self._field_pair(
             "波束指向角度 φ₀（deg）",
@@ -327,7 +322,7 @@ class PhaseConfigWindow(QMainWindow):
             270,
             label_width=164,
             label_alignment=Qt.AlignLeft | Qt.AlignVCenter,
-            label_indent=24,
+            label_indent=0,
         )
         layout.addWidget(theta_pair, 2, 0, Qt.AlignHCenter)
         layout.addWidget(phi_pair, 2, 2, Qt.AlignHCenter)
