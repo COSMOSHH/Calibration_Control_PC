@@ -151,7 +151,7 @@ run_calibration_ui.py
 Feed4 测试完成后，程序会读取前面所有输出表中的最佳点，自动生成：
 
 ```text
-output/CalData_MultiFeed_BDp30_212.xlsx
+output/CalData_MultiFeed_MultiBeamDir_212to224.xlsx
 ```
 
 ### UI1 手动相位配置
@@ -243,7 +243,7 @@ output/
 | `CalProcess_Feed2wrt1_BDp30_212.xlsx` | Feed2 校准完成 | Feed2 相对 Feed1 的扫描过程 |
 | `CalProcess_Feed3wrt12_BDp30_212.xlsx` | Feed3 校准完成 | Feed3 相对 Feed1/2 的扫描过程 |
 | `CalProcess_Feed4wrt123_BDp30_212.xlsx` | Feed4 校准完成 | Feed4 相对 Feed1/2/3 的扫描过程 |
-| `CalData_MultiFeed_BDp30_212.xlsx` | Feed4 校准完成后自动生成 | Feed1~4 最佳相位和功率汇总 |
+| `CalData_MultiFeed_MultiBeamDir_212to224.xlsx` | Feed4 校准完成后自动生成 | 按频点页和波束指向行汇总 Feed1~4 视在相位 |
 
 输出文件固定同名覆盖，不追加时间戳。每个过程表最大功率点会标红。
 

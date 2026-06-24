@@ -12,74 +12,36 @@ from ..models import CalibrationResult
 from ..utils import format_phase
 
 
-# Excel 中最佳点用红色字体标记，便于人工核对扫描结果。
 RED_FONT = Font(color="FF0000")
+
+MULTI_BEAM_RESULT_NAME = "CalData_MultiFeed_MultiBeamDir_212to224.xlsx"
+MULTI_BEAM_FREQUENCIES_GHZ = (212, 215, 218, 221, 224)
+MULTI_BEAM_HEADER_ROW = 2
+MULTI_BEAM_DATA_START_ROW = 3
+MULTI_BEAM_BEAM_COL = 1
+MULTI_BEAM_MEASURED_PHASE_COLS = (6, 7, 8, 9)
 
 
 class ExcelExporter:
-    """负责 UI0 校准数据的 Excel 读写。
-
-    当前输出分三类：
-    - Feed1 单馈源功率测试表：TestData_Feed1_BDp30_212.xlsx
-    - Feed2~4 相位校准过程表：CalProcess_Feed{n}wrt{ref}_BDp30_212.xlsx
-    - 四馈源最终汇总表：CalData_MultiFeed_BDp30_212.xlsx
-
-    调试最佳相位继承时重点看 read_best_feed_point() 和 _write_reference_rows()。
-    """
+    """Read and write UI0 calibration workbooks."""
 
     def __init__(self, template_dir: Path = TEMPLATE_DIR, output_dir: Path = OUTPUT_DIR) -> None:
         self.template_dir = Path(template_dir)
         self.output_dir = Path(output_dir)
-        # 输出目录不存在时自动创建，避免首次运行保存失败。
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def save_scan_result(self, result: CalibrationResult) -> Path:
-        """按目标馈源编号选择保存格式。
-
-        Feed1 是单馈源功率测试，Feed2~4 是相对前序馈源的相位校准过程。
-        """
+        """Save one feed scan result in the existing process workbook format."""
         if result.config.target_feed_id == 1:
             return self._save_feed1_test_data(result)
         return self._save_cal_process(result)
 
     def save_multi_feed_result(self, frequency_ghz: float, beam_angle_deg: float) -> Path:
-        """生成四馈源最终汇总表。
-
-        它会依次读取 Feed1~Feed4 已保存过程表中的最佳点；如果某个 Feed
-        还没有扫描结果，就抛出异常提醒 UI。
-        """
-        output = self._copy_or_create("CalData_MultiFeed_BDp30_212.xlsx", "CalData")
-        wb = load_workbook(output)
-        ws = wb.active
-        ws["A1"] = frequency_ghz
-        ws["B1"] = beam_angle_deg
-
-        missing: list[int] = []
-        for feed_id in range(1, 5):
-            best = self.read_best_feed_point(feed_id)
-            if best is None:
-                missing.append(feed_id)
-                continue
-
-            phase_deg, power_uw = best
-            # 模板按每个 Feed 占两行排布，实际数据写在 feed_id * 2 + 1 行。
-            row = feed_id * 2 + 1
-            ws.cell(row=row, column=2, value=phase_deg)
-            ws.cell(row=row, column=3, value=round(power_uw, 6))
-            self._mark_cells_red(ws, row, (2, 3))
-
-        if missing:
-            missing_text = ", ".join(f"Feed{feed_id}" for feed_id in missing)
-            raise ValueError(f"缺少最终汇总所需的最佳点数据：{missing_text}")
-
-        wb.save(output)
-        return output
+        """Generate or update the multi-frequency, multi-beam summary workbook."""
+        return self._save_multi_beam_result(frequency_ghz, beam_angle_deg)
 
     def _save_feed1_test_data(self, result: CalibrationResult) -> Path:
-        """保存 Feed1 单馈源功率测试结果。
-
-        从第 3 行开始写：A 列相位，B 列功率(uW)，最大功率点标红。
-        """
+        """Save Feed1 single-feed power test data."""
         output = self._copy_or_create("TestData_Feed1_BDp30_212.xlsx", "TestData")
         wb = load_workbook(output)
         ws = wb.active
@@ -97,11 +59,7 @@ class ExcelExporter:
         return output
 
     def _save_cal_process(self, result: CalibrationResult) -> Path:
-        """保存 Feed2~4 的相位校准过程表。
-
-        文件名中的 wrt 表示“相对前序馈源”。例如 Feed3wrt12 表示 Feed1/2
-        已固定在最佳相位，当前扫描 Feed3。
-        """
+        """Save Feed2~4 phase scan process data."""
         ref = "".join(str(feed_id) for feed_id in range(1, result.config.target_feed_id))
         output_name = f"CalProcess_Feed{result.config.target_feed_id}wrt{ref}_BDp30_212.xlsx"
         output = self._copy_or_create(output_name, "CalProcess")
@@ -113,7 +71,6 @@ class ExcelExporter:
 
         self._write_reference_rows(ws, result.config.target_feed_id)
 
-        # Feed2 从第 5 行开始，Feed3 从第 7 行开始，Feed4 从第 9 行开始。
         data_start_row = result.config.target_feed_id * 2 + 1
         best = result.best_point
         self._clear_data_columns(ws, start_row=data_start_row, columns=(2, 3))
@@ -127,11 +84,7 @@ class ExcelExporter:
         return output
 
     def read_best_feed_point(self, feed_id: int) -> tuple[float, float] | None:
-        """读取某个馈源历史表中的最佳相位点。
-
-        返回 (phase_deg, power_uw)。UI0 依靠这个函数继承前序最佳相位，
-        UI1 的自动校准也会读取这些最佳相位作为偏移。
-        """
+        """Return (phase_deg, power_uw) for the highest-power point of a feed."""
         workbook = self._output_path_for_feed(feed_id)
         if workbook is None or not workbook.exists():
             return None
@@ -142,7 +95,7 @@ class ExcelExporter:
         return self._read_best_point(ws, start_row)
 
     def _write_reference_rows(self, ws: Worksheet, target_feed_id: int) -> None:
-        """把前序馈源的最佳点写入当前过程表顶部区域。"""
+        """Write previous feeds' best points into the current process workbook."""
         for feed_id in range(1, target_feed_id):
             best = self.read_best_feed_point(feed_id)
             if best is None:
@@ -154,10 +107,9 @@ class ExcelExporter:
             self._mark_cells_red(ws, row, (2, 3))
 
     def _read_best_point(self, ws: Worksheet, start_row: int) -> tuple[float, float] | None:
-        """从指定起始行往下扫描，选出功率最大的相位点。"""
+        """Scan down from start_row and select the row with maximum power."""
         best: tuple[float, float] | None = None
         for row in range(start_row, ws.max_row + 1):
-            # Feed1 表使用 A/B 列；Feed2~4 过程表使用 B/C 列。
             phase = ws.cell(row=row, column=2 if start_row > 3 else 1).value
             power = ws.cell(row=row, column=3 if start_row > 3 else 2).value
             if not isinstance(phase, (int, float)) or not isinstance(power, (int, float)):
@@ -167,7 +119,7 @@ class ExcelExporter:
         return best
 
     def _output_path_for_feed(self, feed_id: int) -> Path | None:
-        """根据馈源编号定位它对应的输出文件。"""
+        """Locate the process workbook that stores a feed's best point."""
         if feed_id == 1:
             return self.output_dir / "TestData_Feed1_BDp30_212.xlsx"
         if 2 <= feed_id <= 4:
@@ -175,11 +127,226 @@ class ExcelExporter:
             return self.output_dir / f"CalProcess_Feed{feed_id}wrt{ref}_BDp30_212.xlsx"
         return None
 
-    def _copy_or_create(self, output_name: str, sheet_name: str) -> Path:
-        """优先从模板复制输出文件；没有模板时创建一个最小工作簿。
+    def _save_multi_beam_result(self, frequency_ghz: float, beam_angle_deg: float) -> Path:
+        """Write Feed1~4 apparent phases to F:I in the new summary workbook."""
+        missing: list[int] = []
+        measured_phases: list[float] = []
+        for feed_id in range(1, 5):
+            best = self.read_best_feed_point(feed_id)
+            if best is None:
+                missing.append(feed_id)
+                continue
+            measured_phases.append(best[0])
 
-        如果 output 已存在但模板缺失，则复用现有输出，避免覆盖用户手工调整过的表。
-        """
+        if missing:
+            missing_text = ", ".join(f"Feed{feed_id}" for feed_id in missing)
+            raise ValueError(f"Missing best point data required for final summary: {missing_text}")
+
+        output, created = self._copy_or_create_multi_beam_result()
+        wb = load_workbook(output)
+        self._ensure_multi_beam_frequency_sheets(wb)
+        if created:
+            self._clear_multi_beam_measurements_from_workbook(wb)
+
+        ws = self._multi_beam_sheet_for_frequency(wb, frequency_ghz)
+        row = self._find_multi_beam_row(ws, beam_angle_deg)
+        if row is None:
+            if created:
+                wb.save(output)
+            raise ValueError(
+                f"{frequency_ghz:g} GHz sheet does not contain Beam Dir. "
+                f"{beam_angle_deg:g} deg in column A. Add that row in {MULTI_BEAM_RESULT_NAME} first."
+            )
+
+        for phase_deg, column in zip(measured_phases, MULTI_BEAM_MEASURED_PHASE_COLS):
+            ws.cell(row=row, column=column, value=round(phase_deg, 6))
+
+        wb.save(output)
+        return output
+
+    def _copy_or_create_multi_beam_result(self) -> tuple[Path, bool]:
+        """Create the cumulative multi-beam workbook only when it is missing."""
+        output = self.output_dir / MULTI_BEAM_RESULT_NAME
+        if output.exists():
+            return output, False
+
+        template = self._template_path(MULTI_BEAM_RESULT_NAME)
+        if template.exists():
+            copy2(template, output)
+        else:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = str(MULTI_BEAM_FREQUENCIES_GHZ[0])
+            self._initialize_multi_beam_sheet(ws, MULTI_BEAM_FREQUENCIES_GHZ[0])
+            wb.save(output)
+        return output, True
+
+    def _ensure_multi_beam_frequency_sheets(self, wb: Workbook) -> None:
+        """Ensure only the required frequency worksheets exist and use the new layout."""
+        layout_ws = self._find_multi_beam_layout_sheet(wb)
+        for frequency in MULTI_BEAM_FREQUENCIES_GHZ:
+            title = str(frequency)
+            ws = wb[title] if title in wb.sheetnames else None
+            if ws is not None and self._is_multi_beam_sheet(ws):
+                ws["B1"] = frequency
+                self._refresh_multi_beam_theory_formulas(ws)
+                continue
+
+            if ws is not None and layout_ws is None:
+                self._initialize_multi_beam_sheet(ws, frequency)
+                self._refresh_multi_beam_theory_formulas(ws)
+                layout_ws = ws
+                continue
+
+            if ws is not None:
+                wb.remove(ws)
+
+            if layout_ws is not None:
+                ws = wb.copy_worksheet(layout_ws)
+                ws.title = title
+                self._clear_multi_beam_measurements(ws)
+            else:
+                ws = wb.create_sheet(title)
+                self._initialize_multi_beam_sheet(ws, frequency)
+                layout_ws = ws
+            ws["B1"] = frequency
+            self._refresh_multi_beam_theory_formulas(ws)
+
+        expected_titles = {str(freq) for freq in MULTI_BEAM_FREQUENCIES_GHZ}
+        for ws in list(wb.worksheets):
+            if ws.title in expected_titles:
+                continue
+            if ws.title.isdigit() and 212 <= int(ws.title) <= 224:
+                wb.remove(ws)
+                continue
+            if ws.max_row == 1 and ws.max_column == 1 and ws["A1"].value is None:
+                wb.remove(ws)
+        self._order_multi_beam_frequency_sheets(wb)
+
+    def _order_multi_beam_frequency_sheets(self, wb: Workbook) -> None:
+        """Keep frequency worksheets in the required output order."""
+        ordered_titles = [str(freq) for freq in MULTI_BEAM_FREQUENCIES_GHZ]
+        by_title = {ws.title: ws for ws in wb.worksheets}
+        ordered = [by_title[title] for title in ordered_titles if title in by_title]
+        extras = [ws for ws in wb.worksheets if ws.title not in set(ordered_titles)]
+        wb._sheets = ordered + extras
+
+    def _find_multi_beam_layout_sheet(self, wb: Workbook) -> Worksheet | None:
+        """Find a worksheet that already matches the new summary layout."""
+        for ws in wb.worksheets:
+            if self._is_multi_beam_sheet(ws):
+                return ws
+        return None
+
+    def _is_multi_beam_sheet(self, ws: Worksheet) -> bool:
+        """Detect the new summary table by the stable Beam Dir. header."""
+        header = ws.cell(row=MULTI_BEAM_HEADER_ROW, column=MULTI_BEAM_BEAM_COL).value
+        return (
+            isinstance(header, str)
+            and header.strip().lower().startswith("beam")
+            and ws.max_column >= max(MULTI_BEAM_MEASURED_PHASE_COLS)
+        )
+
+    def _initialize_multi_beam_sheet(self, ws: Worksheet, frequency: int) -> None:
+        """Create a minimal fallback sheet if the Excel template is unavailable."""
+        for merged_range in list(ws.merged_cells.ranges):
+            ws.unmerge_cells(str(merged_range))
+        for row in range(1, ws.max_row + 1):
+            for col in range(1, ws.max_column + 1):
+                ws.cell(row=row, column=col).value = None
+
+        ws["A1"] = "Freq."
+        ws["B1"] = frequency
+        ws.merge_cells("C1:E1")
+        ws["C1"] = "theoretical phase"
+        ws.merge_cells("G1:I1")
+        ws["G1"] = "apparent phase measured value"
+        headers = [
+            "Beam Dir.",
+            "phi1(theoretical value)",
+            "phi2(theoretical value)",
+            "phi3(theoretical value)",
+            "phi4(theoretical value)",
+            "phip1/deg",
+            "phip2/deg",
+            "phip3/deg",
+            "phip4/deg",
+        ]
+        for col, header in enumerate(headers, start=1):
+            ws.cell(row=MULTI_BEAM_HEADER_ROW, column=col, value=header)
+
+        for row, beam_angle in enumerate(range(-30, 31), start=MULTI_BEAM_DATA_START_ROW):
+            ws.cell(row=row, column=MULTI_BEAM_BEAM_COL, value=beam_angle)
+        self._refresh_multi_beam_theory_formulas(ws)
+
+    def _refresh_multi_beam_theory_formulas(self, ws: Worksheet) -> None:
+        """Set B:E theory formulas on every prepared Beam Dir. row."""
+        for row in range(MULTI_BEAM_DATA_START_ROW, ws.max_row + 1):
+            beam_angle = self._as_number(ws.cell(row=row, column=MULTI_BEAM_BEAM_COL).value)
+            if beam_angle is None:
+                continue
+            ws.cell(row=row, column=2, value=0)
+            for offset, column in enumerate((3, 4, 5), start=1):
+                ws.cell(
+                    row=row,
+                    column=column,
+                    value=f"=MOD(-180*$B$1*{offset}*15.52*2*SIN(A{row}*PI()/180)/300,360)",
+                )
+
+    def _clear_multi_beam_measurements_from_workbook(self, wb: Workbook) -> None:
+        """Remove example measured values copied from the template workbook."""
+        for ws in wb.worksheets:
+            if self._is_multi_beam_sheet(ws):
+                self._clear_multi_beam_measurements(ws)
+
+    def _clear_multi_beam_measurements(self, ws: Worksheet) -> None:
+        """Clear F:I measured phase columns while preserving Beam Dir. and theory."""
+        for row in range(MULTI_BEAM_DATA_START_ROW, ws.max_row + 1):
+            for column in MULTI_BEAM_MEASURED_PHASE_COLS:
+                ws.cell(row=row, column=column).value = None
+
+    def _multi_beam_sheet_for_frequency(self, wb: Workbook, frequency_ghz: float) -> Worksheet:
+        """Return the worksheet for one of the required GHz frequencies."""
+        title = self._multi_beam_sheet_title(frequency_ghz)
+        return wb[title]
+
+    def _multi_beam_sheet_title(self, frequency_ghz: float) -> str:
+        """Map an allowed GHz frequency to its worksheet title."""
+        frequency = float(frequency_ghz)
+        frequency_int = round(frequency)
+        if abs(frequency - frequency_int) > 1e-6:
+            raise ValueError("Final summary frequency must be one of: 212, 215, 218, 221, 224 GHz.")
+        if frequency_int not in MULTI_BEAM_FREQUENCIES_GHZ:
+            raise ValueError("Final summary frequency must be one of: 212, 215, 218, 221, 224 GHz.")
+        return str(frequency_int)
+
+    def _find_multi_beam_row(self, ws: Worksheet, beam_angle_deg: float) -> int | None:
+        """Find the manually prepared Beam Dir. row for the current measurement."""
+        target = float(beam_angle_deg)
+        for row in range(MULTI_BEAM_DATA_START_ROW, ws.max_row + 1):
+            value = self._as_number(ws.cell(row=row, column=MULTI_BEAM_BEAM_COL).value)
+            if value is not None and abs(value - target) <= 1e-6:
+                return row
+        return None
+
+    def _as_number(self, value) -> float | None:
+        """Convert worksheet values to float while ignoring bools and blanks."""
+        if isinstance(value, bool) or value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                return float(text)
+            except ValueError:
+                return None
+        return None
+
+    def _copy_or_create(self, output_name: str, sheet_name: str) -> Path:
+        """Copy a template to output, or create a minimal workbook if missing."""
         output = self.output_dir / output_name
         template = self._template_path(output_name)
         if template.exists():
@@ -195,10 +362,7 @@ class ExcelExporter:
         return output
 
     def _template_path(self, output_name: str) -> Path:
-        """匹配模板文件名。
-
-        支持两种命名：与输出文件同名，或 stem 后追加 -standard。
-        """
+        """Match either an exact template name or a -standard template name."""
         template = self.template_dir / output_name
         if template.exists():
             return template
@@ -207,25 +371,25 @@ class ExcelExporter:
         standard_name = f"{output_path.stem}-standard{output_path.suffix}"
         return self.template_dir / standard_name
 
-    def _clear_rows(self, ws, start_row: int, max_col: int) -> None:
-        """清空指定起始行之后的连续列，防止旧扫描数据残留。"""
+    def _clear_rows(self, ws: Worksheet, start_row: int, max_col: int) -> None:
+        """Clear contiguous columns from start_row down."""
         for row in range(start_row, ws.max_row + 1):
             for col in range(1, max_col + 1):
                 ws.cell(row=row, column=col).value = None
 
     def _clear_data_columns(self, ws: Worksheet, start_row: int, columns: tuple[int, ...]) -> None:
-        """只清空过程表中的数据列，保留模板其它说明或公式区域。"""
+        """Clear only data columns in process workbooks."""
         for row in range(start_row, ws.max_row + 1):
             for col in columns:
                 ws.cell(row=row, column=col).value = None
 
     def _mark_cells_red(self, ws: Worksheet, row: int, columns: tuple[int, ...]) -> None:
-        """把最佳点单元格标红。"""
+        """Mark the best point cells in red."""
         for col in columns:
             ws.cell(row=row, column=col).font = RED_FONT
 
     def describe_scan(self, result: CalibrationResult) -> str:
-        """生成简短扫描描述，用于 UI 消息或后续日志扩展。"""
+        """Return a short scan summary for UI messages or future logs."""
         config = result.config
         return (
             f"Feed{config.target_feed_id} "
