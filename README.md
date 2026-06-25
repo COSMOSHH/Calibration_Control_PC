@@ -46,6 +46,7 @@ python run_app.py --config --serial-port COM3
 | 参数 | 默认值 |
 |------|--------|
 | 频谱仪 VISA 地址 | `TCPIP::10.18.18.2::INSTR` |
+| 频谱仪配置档位 | `research` |
 | 测试频点 | 212 GHz |
 | 波束指向角 | 30 deg |
 | UI1 波束配相 θ₀ 默认值 | 0 deg |
@@ -217,6 +218,7 @@ spectrum_analyzer_mode = "simulated"
 ```python
 device_mode = "serial"
 spectrum_analyzer_mode = "visa"
+spectrum_analyzer_profile = "research"  # 或 "xian_gpib"
 ```
 
 也可以在 UI 里选择串口并点击“串口连接”，使当前窗口切到真实串口发送。

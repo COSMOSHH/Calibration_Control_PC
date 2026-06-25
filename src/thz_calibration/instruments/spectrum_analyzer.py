@@ -143,3 +143,77 @@ class VisaSpectrumAnalyzer:
         self._instrument.write("CALCulate:MARKer1:MAXimum")
         time.sleep(0.1)
         return float(self._instrument.query("CALCulate:MARKer1:Y?"))
+
+
+class XianGpibSpectrumAnalyzer:
+    """西安研究所已验证的 R&S FSQ40 GPIB/VISA/SCPI 访问实现。
+
+    这套逻辑移植自 `转台控制` 工程，保留其单次扫描、峰值搜索和 FSQ 型号识别流程。
+    """
+
+    def __init__(self, address: str, timeout_ms: int = 10000) -> None:
+        self.address = address
+        self.timeout_ms = timeout_ms
+        self._rm = None
+        self._instrument = None
+        self._connected = False
+
+    def connect(self) -> None:
+        try:
+            import pyvisa
+        except ImportError as exc:
+            raise RuntimeError("pyvisa is required for VISA spectrum analyzer access") from exc
+
+        self._rm = pyvisa.ResourceManager()
+        self._instrument = self._rm.open_resource(self.address)
+        self._instrument.timeout = self.timeout_ms
+        self._instrument.write_termination = "\n"
+        self._instrument.read_termination = "\n"
+
+        identity = self.read_identity()
+        if "FSQ" not in identity.upper():
+            raise RuntimeError(f"connected VISA resource is not an FSQ analyzer: {identity}")
+
+        self._write("INIT:CONT OFF")
+        self._write("CALC:MARK ON")
+        self._connected = True
+
+    def disconnect(self) -> None:
+        if self._instrument is not None:
+            self._instrument.close()
+            self._instrument = None
+        if self._rm is not None:
+            self._rm.close()
+            self._rm = None
+        self._connected = False
+
+    def is_connected(self) -> bool:
+        return self._connected and self._instrument is not None
+
+    def read_identity(self) -> str:
+        return self._query("*IDN?").strip()
+
+    def read_peak_power_dbm(self, context: MeasurementContext | None = None) -> float:
+        """按西安所现有流程执行单次扫频并读取峰值功率。"""
+        self._ensure_connected()
+        self._write("INIT:CONT OFF")
+        self._write("INIT")
+        self._query("*OPC?")
+        self._write("CALC:MARK:MAX")
+        return float(self._query("CALC:MARK:Y?"))
+
+    def _write(self, command: str) -> None:
+        self._ensure_instrument()
+        self._instrument.write(command)
+
+    def _query(self, command: str) -> str:
+        self._ensure_instrument()
+        return str(self._instrument.query(command))
+
+    def _ensure_connected(self) -> None:
+        if not self._connected:
+            raise RuntimeError("Xi'an GPIB spectrum analyzer is not connected")
+
+    def _ensure_instrument(self) -> None:
+        if self._instrument is None:
+            raise RuntimeError("VISA instrument is not connected")

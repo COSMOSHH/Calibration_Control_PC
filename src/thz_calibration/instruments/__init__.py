@@ -1,6 +1,11 @@
-# 频谱仪包导出抽象接口和两种实现：模拟读数与 VISA 实机读数。
+# 频谱仪包导出抽象接口和实现：模拟读数、研究院 VISA 读数和西安所 GPIB 读数。
 from .signal_generator import SignalGenerator, SignalSourceController, SimulatedSignalGenerator, VisaSignalGenerator
-from .spectrum_analyzer import SimulatedSpectrumAnalyzer, SpectrumAnalyzer, VisaSpectrumAnalyzer
+from .spectrum_analyzer import (
+    SimulatedSpectrumAnalyzer,
+    SpectrumAnalyzer,
+    VisaSpectrumAnalyzer,
+    XianGpibSpectrumAnalyzer,
+)
 
 __all__ = [
     "SignalGenerator",
@@ -10,4 +15,5 @@ __all__ = [
     "SpectrumAnalyzer",
     "SimulatedSpectrumAnalyzer",
     "VisaSpectrumAnalyzer",
+    "XianGpibSpectrumAnalyzer",
 ]
