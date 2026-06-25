@@ -14,12 +14,13 @@ from ..utils import format_phase
 
 RED_FONT = Font(color="FF0000")
 
-MULTI_BEAM_RESULT_NAME = "CalData_MultiFeed_MultiBeamDir_212to224.xlsx"
+MULTI_BEAM_RESULT_NAME = "CalData_MultiFeed_MultiBeamDir_212to224_6bit.xlsx"
 MULTI_BEAM_FREQUENCIES_GHZ = (212, 215, 218, 221, 224)
 MULTI_BEAM_HEADER_ROW = 2
 MULTI_BEAM_DATA_START_ROW = 3
 MULTI_BEAM_BEAM_COL = 1
-MULTI_BEAM_MEASURED_PHASE_COLS = (6, 7, 8, 9)
+MULTI_BEAM_QUANTIZED_PHASE_COLS = (6, 7, 8, 9)
+MULTI_BEAM_MEASURED_PHASE_COLS = (10, 11, 12, 13)
 
 
 class ExcelExporter:
@@ -128,7 +129,7 @@ class ExcelExporter:
         return None
 
     def _save_multi_beam_result(self, frequency_ghz: float, beam_angle_deg: float) -> Path:
-        """Write Feed1~4 apparent phases to F:I in the new summary workbook."""
+        """Write Feed1~4 apparent phases to J:M in the 6-bit summary workbook."""
         missing: list[int] = []
         measured_phases: list[float] = []
         for feed_id in range(1, 5):
@@ -258,15 +259,20 @@ class ExcelExporter:
         ws["A1"] = "Freq."
         ws["B1"] = frequency
         ws.merge_cells("C1:E1")
-        ws["C1"] = "theoretical phase"
-        ws.merge_cells("G1:I1")
-        ws["G1"] = "apparent phase measured value"
+        ws["C1"] = "phase to be designed"
+        ws["G1"] = "6-bit quantized phase"
+        ws.merge_cells("K1:M1")
+        ws["K1"] = "calibrated apparent phase"
         headers = [
             "Beam Dir.",
-            "phi1(theoretical value)",
-            "phi2(theoretical value)",
-            "phi3(theoretical value)",
-            "phi4(theoretical value)",
+            "phi1(deg)",
+            "phi2(deg)",
+            "phi3(deg)",
+            "phi4(deg)",
+            "phi1/deg",
+            "phi2/deg",
+            "phi3/deg",
+            "phi4/deg",
             "phip1/deg",
             "phip2/deg",
             "phip3/deg",
@@ -292,6 +298,12 @@ class ExcelExporter:
                     column=column,
                     value=f"=MOD(-180*$B$1*{offset}*15.52*2*SIN(A{row}*PI()/180)/300,360)",
                 )
+            for source_column, target_column in zip((2, 3, 4, 5), MULTI_BEAM_QUANTIZED_PHASE_COLS):
+                ws.cell(
+                    row=row,
+                    column=target_column,
+                    value=f"=MOD(ROUND({ws.cell(row=row, column=source_column).coordinate}/5.625,0)*5.625,360)",
+                )
 
     def _clear_multi_beam_measurements_from_workbook(self, wb: Workbook) -> None:
         """Remove example measured values copied from the template workbook."""
@@ -300,7 +312,7 @@ class ExcelExporter:
                 self._clear_multi_beam_measurements(ws)
 
     def _clear_multi_beam_measurements(self, ws: Worksheet) -> None:
-        """Clear F:I measured phase columns while preserving Beam Dir. and theory."""
+        """Clear J:M measured phase columns while preserving Beam Dir., theory, and 6-bit formulas."""
         for row in range(MULTI_BEAM_DATA_START_ROW, ws.max_row + 1):
             for column in MULTI_BEAM_MEASURED_PHASE_COLS:
                 ws.cell(row=row, column=column).value = None
