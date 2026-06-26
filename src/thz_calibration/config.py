@@ -48,10 +48,10 @@ class AppDefaults:
     xian_gpib_visa_address: str = "GPIB0::20::INSTR"
     # 真实频谱仪连接超时。
     spectrum_analyzer_timeout_ms: int = 5000
-    # 信号源默认手动控制，避免无仪器或地址未配置时误下发 VISA/SCPI 命令。
+    # 信号源默认手动控制，避免无仪器或地址未配置时误下发 VISA/SCPI 命令。 TCPIP::0.0.0.0::INSTR
     signal_source_control_mode: str = SIGNAL_SOURCE_CONTROL_MANUAL
-    lo_signal_source_visa_address: str = "TCPIP::0.0.0.0::INSTR"
-    if_signal_source_visa_address: str = "TCPIP::0.0.0.0::INSTR"
+    lo_signal_source_visa_address: str = "TCPIP0::10.18.18.4::hislip0::INSTR"
+    if_signal_source_visa_address: str = "TCPIP0::10.18.18.3::hislip0::INSTR"
     signal_source_timeout_ms: int = 5000
     signal_source_frequency_plan_path: Path = FREQUENCY_PLAN_PATH
     # UI0/模拟频谱仪使用的默认测试频点，UI1 也默认用它计算波束配相。
@@ -142,8 +142,12 @@ def create_spectrum_analyzer(mode: str | None = None):
 
 
 def create_signal_source_controller(mode: str | None = None):
-    """Create the dual signal-source controller when automatic control is enabled."""
-    from .instruments import SignalSourceController, VisaSignalGenerator
+    """Create the dual signal-source controller when automatic control is enabled.
+
+    When an address contains ``0.0.0.0`` the corresponding source is replaced by a
+    simulated generator so that the other source can still be used with a real instrument.
+    """
+    from .instruments import SignalSourceController, SimulatedSignalGenerator, VisaSignalGenerator
 
     selected = _normalize_mode(
         "signal_source_control_mode",
@@ -153,15 +157,12 @@ def create_signal_source_controller(mode: str | None = None):
     if selected == SIGNAL_SOURCE_CONTROL_MANUAL:
         return None
 
+    def _make_source(name: str, address: str):
+        if "0.0.0.0" in address:
+            return SimulatedSignalGenerator(name=name, address=address)
+        return VisaSignalGenerator(name, address, DEFAULTS.signal_source_timeout_ms)
+
     return SignalSourceController(
-        lo_source=VisaSignalGenerator(
-            "LO",
-            DEFAULTS.lo_signal_source_visa_address,
-            DEFAULTS.signal_source_timeout_ms,
-        ),
-        if_source=VisaSignalGenerator(
-            "IF",
-            DEFAULTS.if_signal_source_visa_address,
-            DEFAULTS.signal_source_timeout_ms,
-        ),
+        lo_source=_make_source("LO", DEFAULTS.lo_signal_source_visa_address),
+        if_source=_make_source("IF", DEFAULTS.if_signal_source_visa_address),
     )
