@@ -6,6 +6,7 @@ from .spectrum_analyzer import (
     VisaSpectrumAnalyzer,
     XianGpibSpectrumAnalyzer,
 )
+from .turntable import GcdTurntableDriver, SimulatedTurntableDriver, TurntableBase
 
 __all__ = [
     "SignalGenerator",
@@ -16,4 +17,7 @@ __all__ = [
     "SimulatedSpectrumAnalyzer",
     "VisaSpectrumAnalyzer",
     "XianGpibSpectrumAnalyzer",
+    "TurntableBase",
+    "SimulatedTurntableDriver",
+    "GcdTurntableDriver",
 ]

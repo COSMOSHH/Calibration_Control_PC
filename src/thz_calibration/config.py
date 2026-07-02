@@ -27,6 +27,10 @@ SPECTRUM_ANALYZER_PROFILE_XIAN_GPIB = "xian_gpib"
 SIGNAL_SOURCE_CONTROL_MANUAL = "manual"
 SIGNAL_SOURCE_CONTROL_AUTO = "auto"
 
+# 转台控制模式选项 - "simulated" 只走软件模拟，"serial" 使用 GCD-030401M Modbus RTU。
+TURNTABLE_MODE_SIMULATED = "simulated"
+TURNTABLE_MODE_SERIAL = "serial"
+
 
 @dataclass(frozen=True)
 class AppDefaults:
@@ -73,6 +77,15 @@ class AppDefaults:
     # 串口默认值用于启动后还没有枚举到串口时兜底。
     serial_port: str = "COM1"
     serial_baudrate: int = 9600
+    # UI0 波束指向角对应真实转台角度；默认保持 simulated，点击 UI0“转台连接”后强制使用 serial。
+    turntable_mode: str = TURNTABLE_MODE_SIMULATED
+    turntable_port: str = "COM1"
+    turntable_baudrate: int = 38400
+    turntable_slave_id: int = 1
+    turntable_pulses_per_degree: float = 2000.0
+    turntable_move_timeout_s: float = 30.0
+    turntable_poll_interval_s: float = 0.05
+    turntable_settle_time_s: float = 0.12
 
 
 DEFAULTS = AppDefaults()
@@ -139,6 +152,35 @@ def create_spectrum_analyzer(mode: str | None = None):
         return VisaSpectrumAnalyzer(DEFAULTS.visa_address, DEFAULTS.spectrum_analyzer_timeout_ms)
 
     return SimulatedSpectrumAnalyzer(DEFAULTS.visa_address)
+
+
+def create_turntable_controller(serial_port: str | None = None, mode: str | None = None):
+    """按配置创建 UI0 波束指向角使用的转台控制器。
+
+    UI0 只需要单个目标角度，不创建起始/终止/步长扫描；控制器会把目标角
+    转成相对转动角，再交给 GCD-030401M 驱动写 Modbus RTU 寄存器。
+    """
+    from .controllers import TurntableController
+    from .instruments import GcdTurntableDriver, SimulatedTurntableDriver
+
+    selected = _normalize_mode(
+        "turntable_mode",
+        mode or DEFAULTS.turntable_mode,
+        (TURNTABLE_MODE_SIMULATED, TURNTABLE_MODE_SERIAL),
+    )
+    if selected == TURNTABLE_MODE_SERIAL:
+        driver = GcdTurntableDriver(
+            port=serial_port or DEFAULTS.turntable_port,
+            baudrate=DEFAULTS.turntable_baudrate,
+            slave_id=DEFAULTS.turntable_slave_id,
+            pulses_per_degree=DEFAULTS.turntable_pulses_per_degree,
+            move_timeout_s=DEFAULTS.turntable_move_timeout_s,
+            poll_interval_s=DEFAULTS.turntable_poll_interval_s,
+        )
+    else:
+        driver = SimulatedTurntableDriver()
+
+    return TurntableController(driver, settle_time_s=DEFAULTS.turntable_settle_time_s)
 
 
 def create_signal_source_controller(mode: str | None = None):

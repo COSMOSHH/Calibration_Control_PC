@@ -25,9 +25,11 @@ from ..config import (
     OUTPUT_DIR,
     SIGNAL_SOURCE_CONTROL_AUTO,
     SIGNAL_SOURCE_CONTROL_MANUAL,
+    TURNTABLE_MODE_SERIAL,
     create_device_controller,
     create_signal_source_controller,
     create_spectrum_analyzer,
+    create_turntable_controller,
 )
 from ..data import ExcelExporter, FrequencyPlan
 from ..models import FeedState, ScanConfig, default_feed_states
@@ -59,12 +61,14 @@ class CalibrationTestWindow(QMainWindow):
         self.latest_files: dict[int, Path] = {}
         # best_feed_phases 缓存 Feed1~4 的最佳相位，后续 Feed 扫描会继承前序最佳相位。
         self.best_feed_phases: dict[int, float] = {}
-        # device/analyzer 默认由配置决定是 simulated 还是真实设备；串口连接后会替换 device。
+        # device/analyzer 默认由配置决定是 simulated 还是真实设备。
         self.device = create_device_controller(self.serial_port_default)
         self.analyzer = create_spectrum_analyzer()
         self.device.connect()
         self.analyzer.connect()
         self.signal_source_controller = None
+        self.turntable_port_default = DEFAULTS.turntable_port
+        self.turntable = create_turntable_controller(self.turntable_port_default)
         # CalibrationEngine 是 UI0 的扫描执行器，UI 只负责收集参数和保存结果。
         self.engine = CalibrationEngine(self.device, self.analyzer)
 
@@ -123,7 +127,16 @@ class CalibrationTestWindow(QMainWindow):
         self.serial_btn = QPushButton("串口连接")
         self.serial_btn.setFixedWidth(92)
         self.serial_btn.clicked.connect(self._connect_serial)
+        self.turntable_combo = QComboBox()
+        self.turntable_combo.setFixedWidth(110)
+        self.refresh_turntable_btn = QPushButton("刷新")
+        self.refresh_turntable_btn.setFixedWidth(78)
+        self.refresh_turntable_btn.clicked.connect(self._refresh_turntable_ports)
+        self.turntable_btn = QPushButton("转台连接")
+        self.turntable_btn.setFixedWidth(92)
+        self.turntable_btn.clicked.connect(self._connect_turntable)
         self._refresh_serial_ports()
+        self._refresh_turntable_ports()
 
         left_col = QWidget(group)
         left_layout = QVBoxLayout(left_col)
@@ -149,6 +162,20 @@ class CalibrationTestWindow(QMainWindow):
         serial_row.setFixedSize(345, 28)
         serial_row.move(330, 26)
 
+        turntable_row = QWidget(group)
+        turntable_layout = QHBoxLayout(turntable_row)
+        turntable_layout.setContentsMargins(0, 0, 0, 0)
+        turntable_layout.setSpacing(10)
+        turntable_layout.addWidget(QLabel("转台串口"))
+        self.turntable_combo.setParent(group)
+        turntable_layout.addWidget(self.turntable_combo)
+        self.refresh_turntable_btn.setParent(group)
+        turntable_layout.addWidget(self.refresh_turntable_btn)
+        self.turntable_btn.setParent(group)
+        turntable_layout.addWidget(self.turntable_btn)
+        turntable_row.setFixedSize(370, 28)
+        turntable_row.move(330, 56)
+
         self.global_confirm_btn.setParent(group)
         self.global_confirm_btn.move(848, 26)
 
@@ -157,7 +184,7 @@ class CalibrationTestWindow(QMainWindow):
         mid_layout.setContentsMargins(0, 0, 0, 0)
         mid_layout.addWidget(self._field_pair("本振源功率（dBm）", self.lo_power_spin, 210, 130), alignment=Qt.AlignLeft)
         mid_col.setFixedSize(220, 28)
-        mid_col.move(330, 73)
+        mid_col.move(330, 88)
 
         right_col = QWidget(group)
         right_layout = QVBoxLayout(right_col)
@@ -175,7 +202,7 @@ class CalibrationTestWindow(QMainWindow):
         save_layout.addWidget(self.browse_btn)
         right_layout.addWidget(save_row)
         right_col.setFixedSize(380, 58)
-        right_col.move(560, 73)
+        right_col.move(560, 88)
 
         self.global_inputs = [
             self.freq_spin,
@@ -186,6 +213,8 @@ class CalibrationTestWindow(QMainWindow):
             self.browse_btn,
             self.serial_combo,
             self.refresh_serial_btn,
+            self.turntable_combo,
+            self.refresh_turntable_btn,
         ]
         return group
 
@@ -325,6 +354,7 @@ class CalibrationTestWindow(QMainWindow):
         self._clear_best_phases_from(1)
         lock_widgets(self.global_inputs, False)
         self._refresh_serial_ports()
+        self._refresh_turntable_ports()
 
     def _confirm_global(self) -> None:
         """确认全局设置并锁定输入。
@@ -338,8 +368,13 @@ class CalibrationTestWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "信号源控制失败", str(exc))
             return
+        try:
+            turntable_text = self._move_turntable_to_beam_angle()
+        except Exception as exc:
+            QMessageBox.warning(self, "转台控制失败", str(exc))
+            return
         lock_widgets(self.global_inputs, True)
-        self._message(f"全局设置已确认。\n\n{signal_source_text}")
+        self._message(f"全局设置已确认。\n\n{signal_source_text}\n\n{turntable_text}")
 
     def _prepare_signal_sources(self) -> str:
         frequencies = FrequencyPlan(DEFAULTS.signal_source_frequency_plan_path).lookup(self.freq_spin.value())
@@ -384,6 +419,15 @@ class CalibrationTestWindow(QMainWindow):
         self.signal_source_controller = controller
         return f"信号源自动控制已下发。\n{settings_text}"
 
+    def _move_turntable_to_beam_angle(self) -> str:
+        """把 UI0 的波束指向角作为转台目标角度执行一次定位。"""
+        target_angle = self.beam_spin.value()
+        step_angle = self.turntable.move_to_angle(target_angle)
+        mode_text = "模拟转台（未连接真实转台）" if self.turntable.is_simulated else "真实转台"
+        if abs(step_angle) <= 1e-9:
+            return f"{mode_text}已在波束指向：{target_angle:g} deg。"
+        return f"{mode_text}已转到波束指向：{target_angle:g} deg，本次转动：{step_angle:g} deg。"
+
     def _disconnect_signal_sources(self, suppress_errors: bool = False) -> None:
         if self.signal_source_controller is None:
             return
@@ -410,8 +454,17 @@ class CalibrationTestWindow(QMainWindow):
         if current in ports:
             self.serial_combo.setCurrentText(current)
 
+    def _refresh_turntable_ports(self) -> None:
+        """刷新转台串口下拉框，尽量保留用户当前选择。"""
+        current = self.turntable_combo.currentText() if hasattr(self, "turntable_combo") else DEFAULTS.turntable_port
+        self.turntable_combo.clear()
+        ports = available_serial_ports(self.turntable_port_default)
+        self.turntable_combo.addItems(ports)
+        if current in ports:
+            self.turntable_combo.setCurrentText(current)
+
     def _connect_serial(self) -> None:
-        """把 UI0 从默认设备切换到真实串口设备。
+        """把 UI0 从默认设备切换到真实 STM32 串口设备。
 
         连接成功后必须重建 CalibrationEngine，因为 Engine 持有 DeviceController 引用。
         """
@@ -424,6 +477,21 @@ class CalibrationTestWindow(QMainWindow):
             self._message(f"串口已连接：{port}")
         except Exception as exc:
             QMessageBox.warning(self, "串口连接失败", str(exc))
+
+    def _connect_turntable(self) -> None:
+        """连接真实转台串口，并把当前位置设为 0 deg。"""
+        port = self.turntable_combo.currentText().strip() or self.turntable_port_default
+        try:
+            try:
+                self.turntable.disconnect()
+            except Exception:
+                pass
+            turntable = create_turntable_controller(port, mode=TURNTABLE_MODE_SERIAL)
+            turntable.connect()
+            self.turntable = turntable
+            self._message(f"转台串口已连接并设零：{port}")
+        except Exception as exc:
+            QMessageBox.warning(self, "转台连接失败", str(exc))
 
     def _reset_scan_fields(self, feed_id: int) -> None:
         """重置某个 Feed 的扫描范围，并清空它及后续 Feed 的最佳相位。"""
@@ -544,4 +612,8 @@ class CalibrationTestWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._disconnect_signal_sources(suppress_errors=True)
+        try:
+            self.turntable.disconnect()
+        except Exception:
+            pass
         super().closeEvent(event)
