@@ -5,7 +5,7 @@ from typing import Protocol
 
 
 class SignalGenerator(Protocol):
-    """Minimal signal generator interface used by UI0 global confirmation."""
+    """Minimal signal generator interface used by UI0 signal-source controls."""
 
     def connect(self) -> None:
         ...
@@ -20,6 +20,9 @@ class SignalGenerator(Protocol):
         ...
 
     def configure_cw(self, frequency_ghz: float, power_dbm: float, output_enabled: bool = True) -> None:
+        ...
+
+    def set_output_enabled(self, enabled: bool) -> None:
         ...
 
 
@@ -54,14 +57,19 @@ class SimulatedSignalGenerator:
             raise RuntimeError(f"{self.name} signal generator is not connected")
         self.last_frequency_ghz = frequency_ghz
         self.last_power_dbm = power_dbm
-        self.output_enabled = output_enabled
         self.command_log.extend(
             [
                 f":FREQuency:FIXed {frequency_ghz:.12g}GHZ",
                 f":POWer:LEVel {power_dbm:.6g}DBM",
-                f":OUTPut:STATe {'ON' if output_enabled else 'OFF'}",
             ]
         )
+        self.set_output_enabled(output_enabled)
+
+    def set_output_enabled(self, enabled: bool) -> None:
+        if not self.connected:
+            raise RuntimeError(f"{self.name} signal generator is not connected")
+        self.output_enabled = enabled
+        self.command_log.append(f":OUTPut:STATe {'ON' if enabled else 'OFF'}")
 
 
 class VisaSignalGenerator:
@@ -105,7 +113,12 @@ class VisaSignalGenerator:
             raise RuntimeError(f"{self.name} signal generator is not connected")
         self._instrument.write(f":FREQuency:FIXed {frequency_ghz:.12g}GHZ")
         self._instrument.write(f":POWer:LEVel {power_dbm:.6g}DBM")
-        self._instrument.write(f":OUTPut:STATe {'ON' if output_enabled else 'OFF'}")
+        self.set_output_enabled(output_enabled)
+
+    def set_output_enabled(self, enabled: bool) -> None:
+        if self._instrument is None:
+            raise RuntimeError(f"{self.name} signal generator is not connected")
+        self._instrument.write(f":OUTPut:STATe {'ON' if enabled else 'OFF'}")
 
 
 class SignalSourceController:
@@ -143,6 +156,18 @@ class SignalSourceController:
     ) -> None:
         self.lo_source.configure_cw(lo_frequency_ghz, lo_power_dbm, output_enabled)
         self.if_source.configure_cw(if_frequency_ghz, if_power_dbm, output_enabled)
+
+    def configure_lo_source(self, frequency_ghz: float, power_dbm: float, output_enabled: bool = False) -> None:
+        self.lo_source.configure_cw(frequency_ghz, power_dbm, output_enabled)
+
+    def configure_if_source(self, frequency_ghz: float, power_dbm: float, output_enabled: bool = False) -> None:
+        self.if_source.configure_cw(frequency_ghz, power_dbm, output_enabled)
+
+    def set_lo_output(self, enabled: bool) -> None:
+        self.lo_source.set_output_enabled(enabled)
+
+    def set_if_output(self, enabled: bool) -> None:
+        self.if_source.set_output_enabled(enabled)
 
     def read_identities(self) -> tuple[str, str]:
         return self.lo_source.read_identity(), self.if_source.read_identity()

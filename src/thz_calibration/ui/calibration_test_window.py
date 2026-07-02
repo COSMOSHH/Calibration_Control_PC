@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -50,7 +51,7 @@ class CalibrationTestWindow(QMainWindow):
     def __init__(self, serial_port: str | None = None) -> None:
         super().__init__()
         self.setWindowTitle("馈源间相位校准数据测试")
-        self.setFixedSize(1000, 740)
+        self.setFixedSize(1120, 800)
         self.setStyleSheet(APP_STYLESHEET)
 
         # exporter/output_dir 控制所有 Excel 输出位置；全局设置确认时会重新创建 exporter。
@@ -67,6 +68,8 @@ class CalibrationTestWindow(QMainWindow):
         self.device.connect()
         self.analyzer.connect()
         self.signal_source_controller = None
+        self.lo_source_enabled = False
+        self.if_source_enabled = False
         self.turntable_port_default = DEFAULTS.turntable_port
         self.turntable = create_turntable_controller(self.turntable_port_default)
         # CalibrationEngine 是 UI0 的扫描执行器，UI 只负责收集参数和保存结果。
@@ -101,7 +104,11 @@ class CalibrationTestWindow(QMainWindow):
         防止扫描过程中修改频率或保存目录导致数据不一致。
         """
         group = QGroupBox("全局设置")
-        group.setFixedHeight(150)
+        group.setFixedHeight(190)
+        layout = QGridLayout(group)
+        layout.setContentsMargins(24, 20, 24, 12)
+        layout.setHorizontalSpacing(18)
+        layout.setVerticalSpacing(10)
 
         self.global_reset_btn = QPushButton("重 设")
         self.global_reset_btn.setFixedWidth(92)
@@ -111,7 +118,7 @@ class CalibrationTestWindow(QMainWindow):
         self.lo_power_spin = make_spin(-20.0, -100, 30, 2, 58)
         self.if_power_spin = make_spin(-20.0, -100, 30, 2, 58)
         self.beam_spin = make_spin(DEFAULTS.beam_angle_deg, -180, 180, 2, 58)
-        self.save_dir_edit = make_line(str(self.output_dir), 210)
+        self.save_dir_edit = make_line(str(self.output_dir), 520)
         self.save_dir_edit.setReadOnly(True)
         self.browse_btn = QPushButton("浏览...")
         self.browse_btn.setFixedWidth(68)
@@ -119,78 +126,62 @@ class CalibrationTestWindow(QMainWindow):
         self.global_confirm_btn = QPushButton("确 认")
         self.global_confirm_btn.setFixedWidth(92)
         self.global_confirm_btn.clicked.connect(self._confirm_global)
+        self.lo_on_btn = QPushButton("本振开启")
+        self.lo_off_btn = QPushButton("本振关闭")
+        self.if_on_btn = QPushButton("中频开启")
+        self.if_off_btn = QPushButton("中频关闭")
+        for button in (
+            self.lo_on_btn,
+            self.lo_off_btn,
+            self.if_on_btn,
+            self.if_off_btn,
+        ):
+            button.setFixedWidth(92)
+            button.setCheckable(True)
+        self.lo_on_btn.clicked.connect(lambda: self._set_source_output("lo", True))
+        self.lo_off_btn.clicked.connect(lambda: self._set_source_output("lo", False))
+        self.if_on_btn.clicked.connect(lambda: self._set_source_output("if", True))
+        self.if_off_btn.clicked.connect(lambda: self._set_source_output("if", False))
         self.serial_combo = QComboBox()
-        self.serial_combo.setFixedWidth(110)
+        self.serial_combo.setFixedWidth(88)
         self.refresh_serial_btn = QPushButton("刷新")
-        self.refresh_serial_btn.setFixedWidth(78)
+        self.refresh_serial_btn.setFixedWidth(62)
         self.refresh_serial_btn.clicked.connect(self._refresh_serial_ports)
         self.serial_btn = QPushButton("串口连接")
-        self.serial_btn.setFixedWidth(92)
+        self.serial_btn.setFixedWidth(82)
         self.serial_btn.clicked.connect(self._connect_serial)
         self.turntable_combo = QComboBox()
-        self.turntable_combo.setFixedWidth(110)
+        self.turntable_combo.setFixedWidth(88)
         self.refresh_turntable_btn = QPushButton("刷新")
-        self.refresh_turntable_btn.setFixedWidth(78)
+        self.refresh_turntable_btn.setFixedWidth(62)
         self.refresh_turntable_btn.clicked.connect(self._refresh_turntable_ports)
         self.turntable_btn = QPushButton("转台连接")
-        self.turntable_btn.setFixedWidth(92)
+        self.turntable_btn.setFixedWidth(82)
         self.turntable_btn.clicked.connect(self._connect_turntable)
         self._refresh_serial_ports()
         self._refresh_turntable_ports()
+        self._set_toggle_pair(self.lo_off_btn, self.lo_on_btn)
+        self._set_toggle_pair(self.if_off_btn, self.if_on_btn)
 
-        left_col = QWidget(group)
+        left_col = QWidget()
         left_layout = QVBoxLayout(left_col)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(13)
         left_layout.addWidget(self.global_reset_btn, alignment=Qt.AlignLeft)
         left_layout.addWidget(self._field_pair("校准频率（GHz）", self.freq_spin, 205, 112), alignment=Qt.AlignLeft)
         left_layout.addWidget(self._field_pair("波束指向（deg）", self.beam_spin, 205, 112), alignment=Qt.AlignLeft)
-        left_col.setFixedSize(225, 112)
-        left_col.move(24, 26)
+        left_col.setFixedWidth(225)
 
-        serial_row = QWidget(group)
-        serial_layout = QHBoxLayout(serial_row)
-        serial_layout.setContentsMargins(0, 0, 0, 0)
-        serial_layout.setSpacing(10)
-        serial_layout.addWidget(QLabel("串口"))
-        self.serial_combo.setParent(group)
-        serial_layout.addWidget(self.serial_combo)
-        self.refresh_serial_btn.setParent(group)
-        serial_layout.addWidget(self.refresh_serial_btn)
-        self.serial_btn.setParent(group)
-        serial_layout.addWidget(self.serial_btn)
-        serial_row.setFixedSize(345, 28)
-        serial_row.move(330, 26)
+        ports_row = QWidget()
+        ports_layout = QHBoxLayout(ports_row)
+        ports_layout.setContentsMargins(0, 0, 0, 0)
+        ports_layout.setSpacing(18)
+        ports_layout.addWidget(self._port_box("串口", self.serial_combo, self.refresh_serial_btn, self.serial_btn))
+        ports_layout.addWidget(self._port_box("转台串口", self.turntable_combo, self.refresh_turntable_btn, self.turntable_btn))
+        ports_layout.addStretch(1)
+        lo_col = self._source_column("本振源功率（dBm）", self.lo_power_spin, self.lo_on_btn, self.lo_off_btn)
+        if_col = self._source_column("中频源功率（dBm）", self.if_power_spin, self.if_on_btn, self.if_off_btn)
 
-        turntable_row = QWidget(group)
-        turntable_layout = QHBoxLayout(turntable_row)
-        turntable_layout.setContentsMargins(0, 0, 0, 0)
-        turntable_layout.setSpacing(10)
-        turntable_layout.addWidget(QLabel("转台串口"))
-        self.turntable_combo.setParent(group)
-        turntable_layout.addWidget(self.turntable_combo)
-        self.refresh_turntable_btn.setParent(group)
-        turntable_layout.addWidget(self.refresh_turntable_btn)
-        self.turntable_btn.setParent(group)
-        turntable_layout.addWidget(self.turntable_btn)
-        turntable_row.setFixedSize(370, 28)
-        turntable_row.move(330, 56)
-
-        self.global_confirm_btn.setParent(group)
-        self.global_confirm_btn.move(848, 26)
-
-        mid_col = QWidget(group)
-        mid_layout = QVBoxLayout(mid_col)
-        mid_layout.setContentsMargins(0, 0, 0, 0)
-        mid_layout.addWidget(self._field_pair("本振源功率（dBm）", self.lo_power_spin, 210, 130), alignment=Qt.AlignLeft)
-        mid_col.setFixedSize(220, 28)
-        mid_col.move(330, 88)
-
-        right_col = QWidget(group)
-        right_layout = QVBoxLayout(right_col)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(9)
-        right_layout.addWidget(self._field_pair("中频源功率（dBm）", self.if_power_spin, 210, 130), alignment=Qt.AlignLeft)
         save_row = QWidget()
         save_layout = QHBoxLayout(save_row)
         save_layout.setContentsMargins(0, 0, 0, 0)
@@ -200,9 +191,16 @@ class CalibrationTestWindow(QMainWindow):
         save_layout.addWidget(save_label)
         save_layout.addWidget(self.save_dir_edit)
         save_layout.addWidget(self.browse_btn)
-        right_layout.addWidget(save_row)
-        right_col.setFixedSize(380, 58)
-        right_col.move(560, 88)
+        save_layout.addStretch(1)
+
+        layout.addWidget(left_col, 0, 0, 4, 1, Qt.AlignTop | Qt.AlignLeft)
+        layout.addWidget(ports_row, 0, 1, 1, 3, Qt.AlignLeft)
+        layout.addWidget(self.global_confirm_btn, 0, 4, Qt.AlignRight)
+        layout.addWidget(lo_col, 1, 1, 2, 1, Qt.AlignTop | Qt.AlignLeft)
+        layout.addWidget(if_col, 1, 2, 2, 1, Qt.AlignTop | Qt.AlignLeft)
+        layout.addWidget(save_row, 3, 1, 1, 4)
+        layout.setColumnStretch(3, 1)
+        layout.setColumnStretch(4, 1)
 
         self.global_inputs = [
             self.freq_spin,
@@ -332,6 +330,47 @@ class CalibrationTestWindow(QMainWindow):
         widget.setFixedWidth(width)
         return widget
 
+    def _port_box(self, label_text: str, *widgets: QWidget) -> QWidget:
+        """创建串口行里的“标签 + COM + 按钮”组合。"""
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        label = QLabel(label_text)
+        label.setFixedWidth(62)
+        layout.addWidget(label)
+        for widget in widgets:
+            layout.addWidget(widget)
+        layout.addStretch(1)
+        return row
+
+    def _source_column(self, label_text: str, editor: QWidget, on_button: QPushButton, off_button: QPushButton) -> QWidget:
+        """创建信号源功率输入和独立开关按钮列。"""
+        column = QWidget()
+        layout = QVBoxLayout(column)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(self._field_pair(label_text, editor, 230, 130), alignment=Qt.AlignLeft)
+        layout.addWidget(self._button_row(on_button, off_button), alignment=Qt.AlignLeft)
+        column.setFixedWidth(230)
+        return column
+
+    def _button_row(self, *buttons: QPushButton) -> QWidget:
+        """创建一行并排按钮，供全局设置区复用。"""
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        for button in buttons:
+            layout.addWidget(button)
+        layout.addStretch(1)
+        return row
+
+    def _set_toggle_pair(self, active: QPushButton, inactive: QPushButton) -> None:
+        """维护成对开关按钮的 checked 视觉状态。"""
+        active.setChecked(True)
+        inactive.setChecked(False)
+
     @property
     def _scan_fields(self) -> dict[int, tuple[QDoubleSpinBox, QDoubleSpinBox, QDoubleSpinBox]]:
         """懒创建 Feed2~4 的扫描范围输入框映射。"""
@@ -346,6 +385,8 @@ class CalibrationTestWindow(QMainWindow):
         开始清空 best_feed_phases。
         """
         self._disconnect_signal_sources(suppress_errors=True)
+        self.lo_source_enabled = False
+        self.if_source_enabled = False
         self.freq_spin.setValue(DEFAULTS.frequency_ghz)
         self.lo_power_spin.setValue(-20.0)
         self.if_power_spin.setValue(-20.0)
@@ -353,6 +394,8 @@ class CalibrationTestWindow(QMainWindow):
         self.save_dir_edit.setText(str(OUTPUT_DIR))
         self._clear_best_phases_from(1)
         lock_widgets(self.global_inputs, False)
+        self._set_toggle_pair(self.lo_off_btn, self.lo_on_btn)
+        self._set_toggle_pair(self.if_off_btn, self.if_on_btn)
         self._refresh_serial_ports()
         self._refresh_turntable_ports()
 
@@ -364,9 +407,9 @@ class CalibrationTestWindow(QMainWindow):
         self.output_dir = Path(self.save_dir_edit.text())
         self.exporter = ExcelExporter(output_dir=self.output_dir)
         try:
-            signal_source_text = self._prepare_signal_sources()
+            signal_source_text = self._signal_source_settings_text()
         except Exception as exc:
-            QMessageBox.warning(self, "信号源控制失败", str(exc))
+            QMessageBox.warning(self, "信号源参数错误", str(exc))
             return
         try:
             turntable_text = self._move_turntable_to_beam_angle()
@@ -376,39 +419,39 @@ class CalibrationTestWindow(QMainWindow):
         lock_widgets(self.global_inputs, True)
         self._message(f"全局设置已确认。\n\n{signal_source_text}\n\n{turntable_text}")
 
-    def _prepare_signal_sources(self) -> str:
-        frequencies = FrequencyPlan(DEFAULTS.signal_source_frequency_plan_path).lookup(self.freq_spin.value())
+    def _signal_source_settings_text(self) -> str:
+        frequencies = self._lookup_signal_source_frequencies()
         lo_power_dbm = self.lo_power_spin.value()
         if_power_dbm = self.if_power_spin.value()
         settings_text = (
             f"本振源：{frequencies.lo_frequency_ghz:.9g} GHz，{lo_power_dbm:g} dBm\n"
             f"中频源：{frequencies.if_frequency_ghz:.9g} GHz，{if_power_dbm:g} dBm"
         )
+        return f"信号源频率/功率已确认，输出请使用独立开关控制。\n{settings_text}"
 
+    def _lookup_signal_source_frequencies(self):
+        return FrequencyPlan(DEFAULTS.signal_source_frequency_plan_path).lookup(self.freq_spin.value())
+
+    def _signal_source_control_mode(self) -> str:
         mode = DEFAULTS.signal_source_control_mode.strip().lower()
         if mode == SIGNAL_SOURCE_CONTROL_MANUAL:
-            self._disconnect_signal_sources(suppress_errors=True)
-            return f"信号源手动控制模式，未下发仪器命令。\n请手动设置：\n{settings_text}"
-        if mode != SIGNAL_SOURCE_CONTROL_AUTO:
-            raise ValueError(
-                "signal_source_control_mode must be one of: "
-                f"{SIGNAL_SOURCE_CONTROL_MANUAL}, {SIGNAL_SOURCE_CONTROL_AUTO}"
-            )
+            return mode
+        if mode == SIGNAL_SOURCE_CONTROL_AUTO:
+            return mode
+        raise ValueError(
+            "signal_source_control_mode must be one of: "
+            f"{SIGNAL_SOURCE_CONTROL_MANUAL}, {SIGNAL_SOURCE_CONTROL_AUTO}"
+        )
 
-        self._disconnect_signal_sources()
+    def _ensure_signal_source_controller(self):
+        if self.signal_source_controller is not None:
+            return self.signal_source_controller
         controller = create_signal_source_controller()
         if controller is None:
-            return f"信号源手动控制模式，未下发仪器命令。\n请手动设置：\n{settings_text}"
+            raise RuntimeError("当前为信号源手动控制模式，未创建自动控制器。")
 
         try:
             controller.connect()
-            controller.configure_sources(
-                lo_frequency_ghz=frequencies.lo_frequency_ghz,
-                lo_power_dbm=lo_power_dbm,
-                if_frequency_ghz=frequencies.if_frequency_ghz,
-                if_power_dbm=if_power_dbm,
-                output_enabled=True,
-            )
         except Exception:
             try:
                 controller.disconnect()
@@ -417,7 +460,71 @@ class CalibrationTestWindow(QMainWindow):
             raise
 
         self.signal_source_controller = controller
-        return f"信号源自动控制已下发。\n{settings_text}"
+        return controller
+
+    def _set_source_output(self, source: str, enabled: bool) -> None:
+        try:
+            message = self._apply_source_output(source, enabled)
+        except Exception as exc:
+            self._sync_source_button_state(source)
+            QMessageBox.warning(self, "信号源控制失败", str(exc))
+            return
+
+        if source == "lo":
+            self.lo_source_enabled = enabled
+            self._set_toggle_pair(self.lo_on_btn if enabled else self.lo_off_btn, self.lo_off_btn if enabled else self.lo_on_btn)
+        else:
+            self.if_source_enabled = enabled
+            self._set_toggle_pair(self.if_on_btn if enabled else self.if_off_btn, self.if_off_btn if enabled else self.if_on_btn)
+        self._message(message)
+
+    def _apply_source_output(self, source: str, enabled: bool) -> str:
+        mode = self._signal_source_control_mode()
+        source_name = "本振源" if source == "lo" else "中频源"
+        action_text = "开启" if enabled else "关闭"
+
+        if mode == SIGNAL_SOURCE_CONTROL_MANUAL:
+            if enabled:
+                frequencies = self._lookup_signal_source_frequencies()
+                if source == "lo":
+                    return (
+                        f"信号源手动控制模式，未下发仪器命令。\n"
+                        f"请手动设置并开启{source_name}：{frequencies.lo_frequency_ghz:.9g} GHz，"
+                        f"{self.lo_power_spin.value():g} dBm。"
+                    )
+                return (
+                    f"信号源手动控制模式，未下发仪器命令。\n"
+                    f"请手动设置并开启{source_name}：{frequencies.if_frequency_ghz:.9g} GHz，"
+                    f"{self.if_power_spin.value():g} dBm。"
+                )
+            return f"信号源手动控制模式，未下发仪器命令。\n请手动{action_text}{source_name}。"
+
+        controller = self._ensure_signal_source_controller()
+        if enabled:
+            frequencies = self._lookup_signal_source_frequencies()
+            if source == "lo":
+                controller.configure_lo_source(frequencies.lo_frequency_ghz, self.lo_power_spin.value(), output_enabled=True)
+                return f"{source_name}已开启：{frequencies.lo_frequency_ghz:.9g} GHz，{self.lo_power_spin.value():g} dBm。"
+            controller.configure_if_source(frequencies.if_frequency_ghz, self.if_power_spin.value(), output_enabled=True)
+            return f"{source_name}已开启：{frequencies.if_frequency_ghz:.9g} GHz，{self.if_power_spin.value():g} dBm。"
+
+        if source == "lo":
+            controller.set_lo_output(False)
+        else:
+            controller.set_if_output(False)
+        return f"{source_name}已关闭。"
+
+    def _sync_source_button_state(self, source: str) -> None:
+        if source == "lo":
+            self._set_toggle_pair(
+                self.lo_on_btn if self.lo_source_enabled else self.lo_off_btn,
+                self.lo_off_btn if self.lo_source_enabled else self.lo_on_btn,
+            )
+            return
+        self._set_toggle_pair(
+            self.if_on_btn if self.if_source_enabled else self.if_off_btn,
+            self.if_off_btn if self.if_source_enabled else self.if_on_btn,
+        )
 
     def _move_turntable_to_beam_angle(self) -> str:
         """把 UI0 的波束指向角作为转台目标角度执行一次定位。"""
