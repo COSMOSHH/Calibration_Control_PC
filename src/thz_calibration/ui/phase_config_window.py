@@ -606,18 +606,21 @@ class PhaseConfigWindow(QMainWindow):
     def _send_data(self) -> None:
         """“数据发送”按钮。
 
-        先打印当前队列和完整 HEX，再调用 DeviceController.apply_feed_states()。
+        GUI 反馈窗保持用户配置视角；终端打印实际发送队列和完整 HEX。
         如果当前是 simulated 模式，会得到模拟 ACK；真实串口模式会写入 COM。
         """
         if not self.phase_queue:
             QMessageBox.warning(self, "发送失败", "请先执行相位确认或自动校准。")
             self._feedback("发送失败：发送队列为空。")
             return
-        frame = self.device.encode_feed_states(self.phase_queue)
+        send_queue, _common_offset = self._build_send_queue_with_feed1_zero()
+        frame = self.device.encode_feed_states(send_queue)
+        print("实际发送数据：", flush=True)
+        print(self._format_queue_payload(send_queue), flush=True)
+        print(f"实际发送帧HEX：{frame.hex(' ')}", flush=True)
         self._feedback("发送数据：")
         self._feedback(self._format_queue_payload())
-        self._feedback(f"发送帧HEX：{frame.hex(' ')}")
-        response = self.device.apply_feed_states(self.phase_queue)
+        response = self.device.apply_feed_states(send_queue)
         if response.ok:
             self._feedback("发送成功。")
         else:
@@ -677,10 +680,32 @@ class PhaseConfigWindow(QMainWindow):
             for feed_id, phase in sorted(phases.items())
         ]
 
-    def _format_queue_payload(self) -> str:
-        """格式化当前 phase_queue，供信息反馈窗展示。"""
+    def _build_send_queue_with_feed1_zero(self) -> tuple[list[FeedState], float]:
+        """生成实际发送队列：Feed1 非 0 时四路同步偏置到 Feed1=0。"""
+        feed1 = next((state for state in self.phase_queue if state.feed_id == 1), None)
+        if feed1 is None:
+            return list(self.phase_queue), 0.0
+
+        feed1_phase = feed1.phase_deg % 360.0
+        if abs(feed1_phase) < 1e-9:
+            return list(self.phase_queue), 0.0
+
+        common_offset = -feed1_phase
+        return [
+            FeedState(
+                feed_id=state.feed_id,
+                phase_deg=(state.phase_deg + common_offset) % 360.0,
+                amplitude=state.amplitude,
+                enabled=state.enabled,
+            )
+            for state in self.phase_queue
+        ], common_offset
+
+    def _format_queue_payload(self, feed_states: list[FeedState] | None = None) -> str:
+        """格式化馈源队列，供信息反馈窗展示。"""
+        queue = self.phase_queue if feed_states is None else feed_states
         lines = []
-        for state in self.phase_queue:
+        for state in queue:
             lines.append(
                 f"Feed{state.feed_id}: phase={state.phase_deg:.6f} deg, "
                 f"enabled={state.enabled}"
