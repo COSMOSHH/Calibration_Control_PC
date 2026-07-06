@@ -33,6 +33,11 @@ GHZ_TO_HZ = 1.0e9 # 输出频率输入单位是 GHz，计算时需要换算成 H
 # UI1 默认输入值：θ0 和四个馈源相位都从 0 deg 开始。
 DEFAULT_BEAM_THETA_DEG = 0.0 # 波束指向角 θ0 的默认值；UI0 校准记录里的波束角默认值在 config.py。
 DEFAULT_FEED_PHASE_DEG = 0.0 
+FEED_PHASE_MIN_DEG = 0.0
+FEED_PHASE_MAX_DEG = 360.0
+FEED_PHASE_STEP_DEG = DEFAULTS.phase_step_deg
+FEED_PHASE_STEP_COUNT = int(round((FEED_PHASE_MAX_DEG - FEED_PHASE_MIN_DEG) / FEED_PHASE_STEP_DEG))
+FEED_PHASE_TOLERANCE_DEG = 1e-6
 
 
 class PhaseConfigWindow(QMainWindow):
@@ -296,7 +301,9 @@ class PhaseConfigWindow(QMainWindow):
             feed_layout.setSpacing(14)
             feed_label = QLabel(f"馈源{feed_id}")
             feed_label.setAlignment(Qt.AlignCenter)
-            phase_spin = make_spin(DEFAULT_FEED_PHASE_DEG, 0, 360, 3, 96)
+            phase_spin = make_spin(DEFAULT_FEED_PHASE_DEG, FEED_PHASE_MIN_DEG, FEED_PHASE_MAX_DEG, 3, 96)
+            phase_spin.setSingleStep(FEED_PHASE_STEP_DEG)
+            phase_spin.editingFinished.connect(lambda spin=phase_spin: self._snap_feed_phase_spin(spin))
             self.feed_phase_spins[feed_id] = phase_spin
             feed_layout.addWidget(feed_label)
             feed_layout.addWidget(self._field_pair("相位配置（deg）", phase_spin, 250, label_width=118))
@@ -563,13 +570,10 @@ class PhaseConfigWindow(QMainWindow):
             for feed_id, phase in phases.items():
                 self.feed_phase_spins[feed_id].setValue(phase)
         else:
-            values = self._read_required_spins(
-                tuple((spin, f"馈源{feed_id}相位配置") for feed_id, spin in self.feed_phase_spins.items())
-            )
-            if values is None:
+            phases = self._read_feed_phase_spins()
+            if phases is None:
                 self._set_toggle_pair(self.phase_reset_btn, self.phase_confirm_btn)
                 return False
-            phases = dict(zip(self.feed_phase_spins.keys(), values))
 
         self.phase_queue = self._build_phase_queue(phases)
         self.phase_confirmed = True
@@ -642,7 +646,7 @@ class PhaseConfigWindow(QMainWindow):
             * (180.0 / pi)
         )
         return {
-            feed_id: (base * (feed_id - 1)) % 360.0
+            feed_id: self._quantize_feed_phase(base * (feed_id - 1))
             for feed_id in (1, 2, 3, 4)
         }
 
@@ -679,6 +683,54 @@ class PhaseConfigWindow(QMainWindow):
             FeedState(feed_id=feed_id, phase_deg=phase % 360.0, amplitude=DEFAULTS.default_amplitude, enabled=True)
             for feed_id, phase in sorted(phases.items())
         ]
+
+    def _snap_feed_phase_spin(self, spin: QDoubleSpinBox) -> None:
+        """输入结束后把馈源相位吸附到最近的 5.625 deg 点。"""
+        if not spin.lineEdit().text().strip():
+            return
+        spin.setValue(self._quantize_feed_phase_input(spin.value()))
+
+    def _read_feed_phase_spins(self) -> dict[int, float] | None:
+        """读取并校验四个馈源相位输入。"""
+        values = self._read_required_spins(
+            tuple((spin, f"馈源{feed_id}相位配置") for feed_id, spin in self.feed_phase_spins.items())
+        )
+        if values is None:
+            return None
+
+        phases = dict(zip(self.feed_phase_spins.keys(), values))
+        invalid = [
+            f"馈源{feed_id}: {phase:.3f} deg"
+            for feed_id, phase in phases.items()
+            if not self._is_valid_feed_phase(phase)
+        ]
+        if invalid:
+            message = f"馈源相位必须在 0~360 deg，且为 {FEED_PHASE_STEP_DEG:g} deg 的整数倍。"
+            QMessageBox.warning(self, "相位配置无效", message)
+            self._feedback(f"相位配置无效：{message} 非法输入：{'；'.join(invalid)}。")
+            return None
+        return phases
+
+    def _is_valid_feed_phase(self, phase: float) -> bool:
+        """判断相位是否位于 0~360 且落在 5.625 deg 栅格上。"""
+        if phase < FEED_PHASE_MIN_DEG - FEED_PHASE_TOLERANCE_DEG:
+            return False
+        if phase > FEED_PHASE_MAX_DEG + FEED_PHASE_TOLERANCE_DEG:
+            return False
+        steps = phase / FEED_PHASE_STEP_DEG
+        return abs(steps - round(steps)) < FEED_PHASE_TOLERANCE_DEG
+
+    def _quantize_feed_phase(self, phase: float) -> float:
+        """把公式计算值量化到 5.625 deg 栅格。"""
+        wrapped = phase % FEED_PHASE_MAX_DEG
+        return self._quantize_feed_phase_input(wrapped)
+
+    def _quantize_feed_phase_input(self, phase: float) -> float:
+        """把输入值量化到 0~360 范围内最近的 5.625 deg 点。"""
+        bounded = min(max(phase, FEED_PHASE_MIN_DEG), FEED_PHASE_MAX_DEG)
+        steps = round(bounded / FEED_PHASE_STEP_DEG)
+        steps = max(0, min(FEED_PHASE_STEP_COUNT, steps))
+        return round(steps * FEED_PHASE_STEP_DEG, 3)
 
     def _build_send_queue_with_feed1_zero(self) -> tuple[list[FeedState], float]:
         """生成实际发送队列：Feed1 非 0 时四路同步偏置到 Feed1=0。"""
