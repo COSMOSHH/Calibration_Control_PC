@@ -158,7 +158,7 @@ def create_turntable_controller(serial_port: str | None = None, mode: str | None
     """按配置创建 UI0 波束指向角使用的转台控制器。
 
     UI0 只需要单个目标角度，不创建起始/终止/步长扫描；控制器会把目标角
-    转成相对转动角，再交给 GCD-030401M 驱动写 Modbus RTU 寄存器。
+    作为 HOME/设零后的绝对角度交给 GCD-030401M 驱动写 Modbus RTU 寄存器。
     """
     from .controllers import TurntableController
     from .instruments import GcdTurntableDriver, SimulatedTurntableDriver

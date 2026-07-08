@@ -18,7 +18,7 @@ class TurntableBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def trigger_step_move(self, step_angle: float) -> None:
+    def trigger_absolute_move(self, target_angle: float) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -54,11 +54,11 @@ class SimulatedTurntableDriver(TurntableBase):
         self._ensure_connected()
         self.current_angle = 0.0
 
-    def trigger_step_move(self, step_angle: float) -> None:
+    def trigger_absolute_move(self, target_angle: float) -> None:
         self._ensure_connected()
         if self._stopped:
             raise RuntimeError("模拟转台已急停，不能继续运动。")
-        self.current_angle += step_angle
+        self.current_angle = target_angle
         self._moving_until = time.monotonic() + self._move_time_s
 
     def is_moving(self) -> bool:
@@ -92,8 +92,8 @@ class GcdRegisterMap:
 class GcdTurntableDriver(TurntableBase):
     """GCD-030401M 单轴控制器的 Modbus RTU 驱动。
 
-    角度控制沿用“转台控制”工程方案：上层传入相对转动角度，本类换算成
-    正/负脉冲，写入路径 0 参数寄存器，再触发路径 0 运行。
+    路径 0 的位置参数按 HOME/设零后的绝对位置理解：上层传入目标角度，
+    本类换算成绝对脉冲位置，写入路径 0 参数寄存器，再触发路径 0 运行。
     """
 
     is_simulated = False
@@ -154,12 +154,12 @@ class GcdTurntableDriver(TurntableBase):
         self._write_register(self.registers.trigger_register, self.registers.set_zero_command)
         self.current_angle = 0.0
 
-    def trigger_step_move(self, step_angle: float) -> None:
+    def trigger_absolute_move(self, target_angle: float) -> None:
         self._ensure_connected()
         if self._stopped:
             raise RuntimeError("真实转台已急停，不能继续下发运动指令。")
 
-        pulses = self._degrees_to_pulses(step_angle)
+        pulses = self._degrees_to_pulses(target_angle)
         high_word, low_word = self._split_signed_32bit(pulses)
         path_values = [
             self.path_mode,
@@ -172,7 +172,7 @@ class GcdTurntableDriver(TurntableBase):
         ]
         self._write_registers(self.registers.path0_base_register, path_values)
         self._write_register(self.registers.trigger_register, self.registers.start_path0_command)
-        self.current_angle += step_angle
+        self.current_angle = target_angle
         self._move_started_at = time.monotonic()
 
     def is_moving(self) -> bool:

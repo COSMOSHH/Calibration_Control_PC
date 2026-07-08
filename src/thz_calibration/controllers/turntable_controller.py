@@ -6,7 +6,7 @@ from ..instruments.turntable import TurntableBase
 
 
 class TurntableController:
-    """把 UI 的单个目标角度转换成转台相对运动指令。"""
+    """把 UI 的单个目标角度作为 HOME 零点后的绝对角度下发。"""
 
     def __init__(self, driver: TurntableBase, settle_time_s: float = 0.12) -> None:
         self.driver = driver
@@ -44,20 +44,20 @@ class TurntableController:
         self._zeroed = True
 
     def move_to_angle(self, target_angle: float) -> float:
-        """转到目标角度，返回本次实际下发的相对转动角度。"""
+        """转到目标角度，返回本次实际转动的角度差。"""
         self.connect(zero=True)
-        step_angle = target_angle - self.current_angle
-        if abs(step_angle) <= 1e-9:
+        delta_angle = target_angle - self.current_angle
+        if abs(delta_angle) <= 1e-9:
             return 0.0
 
-        self.driver.trigger_step_move(step_angle)
+        self.driver.trigger_absolute_move(target_angle)
         while self.driver.is_moving():
             time.sleep(0.02)
         if self.settle_time_s > 0:
             time.sleep(self.settle_time_s)
 
         self.current_angle = target_angle
-        return step_angle
+        return delta_angle
 
     def emergency_stop(self) -> None:
         self.driver.emergency_stop()
