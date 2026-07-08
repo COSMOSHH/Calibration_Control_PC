@@ -19,8 +19,12 @@ QFrame#Shell {
 }
 QGroupBox {
     border: 1px solid #b7b7b7;
-    margin-top: 20px;
+    margin-top: 24px;
     background: #ffffff;
+    color: #555555;
+    font-family: "KaiTi", "SimSun";
+    font-size: 22px;
+    font-weight: 600;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
@@ -28,8 +32,14 @@ QGroupBox::title {
     padding: 0 6px;
     color: #555555;
     font-family: "KaiTi", "SimSun";
-    font-size: 17px;
+    font-size: 22px;
     font-weight: 600;
+}
+QGroupBox QWidget {
+    font-family: "Microsoft YaHei", "SimSun";
+    font-size: 13px;
+    font-weight: 400;
+    color: #111111;
 }
 QPushButton {
     min-height: 22px;
