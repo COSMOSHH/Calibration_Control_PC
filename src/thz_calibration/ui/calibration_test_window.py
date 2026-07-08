@@ -51,7 +51,7 @@ class CalibrationTestWindow(QMainWindow):
     def __init__(self, serial_port: str | None = None) -> None:
         super().__init__()
         self.setWindowTitle("馈源间相位校准数据测试")
-        self.setFixedSize(1120, 800)
+        self.setFixedSize(1000, 800)
         self.setStyleSheet(APP_STYLESHEET)
 
         # exporter/output_dir 控制所有 Excel 输出位置；全局设置确认时会重新创建 exporter。
@@ -171,6 +171,7 @@ class CalibrationTestWindow(QMainWindow):
         left_layout.addWidget(self._field_pair("校准频率（GHz）", self.freq_spin, 205, 112), alignment=Qt.AlignLeft)
         left_layout.addWidget(self._field_pair("波束指向（deg）", self.beam_spin, 205, 112), alignment=Qt.AlignLeft)
         left_col.setFixedWidth(205)
+        middle_column_width = 318
 
         serial_port_box = self._port_box("串口", self.serial_combo, self.refresh_serial_btn, self.serial_btn)
         turntable_port_box = self._port_box("转台串口", self.turntable_combo, self.refresh_turntable_btn, self.turntable_btn)
@@ -180,7 +181,7 @@ class CalibrationTestWindow(QMainWindow):
         if_confirm_row = QWidget()
         if_confirm_layout = QHBoxLayout(if_confirm_row)
         if_confirm_layout.setContentsMargins(0, 0, 0, 0)
-        if_confirm_layout.setSpacing(34)
+        if_confirm_layout.setSpacing(24)
         if_confirm_layout.addWidget(if_col, alignment=Qt.AlignTop)
         if_confirm_layout.addWidget(self.global_confirm_btn, alignment=Qt.AlignTop)
         if_confirm_layout.addStretch(1)
@@ -196,12 +197,17 @@ class CalibrationTestWindow(QMainWindow):
         save_layout.addWidget(self.browse_btn)
         save_layout.addStretch(1)
 
+        layout.setColumnMinimumWidth(0, 205)
+        layout.setColumnMinimumWidth(1, middle_column_width)
+        layout.setColumnStretch(0, 0)
+        layout.setColumnStretch(1, 0)
+        layout.setColumnStretch(2, 1)
         layout.addWidget(left_col, 0, 0, 4, 1, Qt.AlignTop | Qt.AlignLeft)
         layout.addWidget(serial_port_box, 0, 1, Qt.AlignLeft)
         layout.addWidget(turntable_port_box, 0, 2, Qt.AlignLeft)
         layout.addWidget(lo_col, 1, 1, 2, 1, Qt.AlignTop | Qt.AlignLeft)
         layout.addWidget(if_confirm_row, 1, 2, 2, 1, Qt.AlignTop | Qt.AlignLeft)
-        layout.addWidget(save_row, 3, 1, 1, 2)
+        layout.addWidget(save_row, 3, 1, 1, 2, Qt.AlignLeft)
 
         self.global_inputs = [
             self.freq_spin,
