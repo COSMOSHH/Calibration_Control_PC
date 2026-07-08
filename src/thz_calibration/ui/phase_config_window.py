@@ -160,11 +160,11 @@ class PhaseConfigWindow(QMainWindow):
         layout.addWidget(output_column, 1, 0, Qt.AlignHCenter)
         layout.addWidget(lo_column, 1, 1, Qt.AlignHCenter)
         layout.addWidget(if_column, 1, 2, Qt.AlignHCenter)
-        layout.addWidget(serial_panel, 0, 3, 2, 1, Qt.AlignTop | Qt.AlignRight)
+        layout.addWidget(serial_panel, 0, 3, 2, 1, Qt.AlignTop | Qt.AlignLeft)
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(2, 1)
-        layout.setColumnStretch(3, 1)
+        layout.setColumnStretch(3, 2)
 
         self.lo_on_btn.clicked.connect(lambda: self._set_source_state("lo", True))
         self.lo_off_btn.clicked.connect(lambda: self._set_source_state("lo", False))
