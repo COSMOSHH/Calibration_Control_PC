@@ -88,7 +88,7 @@ class CalibrationTestWindow(QMainWindow):
 
         title = QLabel("馈源间相位校准数据测试")
         title.setObjectName("WindowTitle")
-        title.setFixedHeight(24)
+        title.setFixedHeight(36)
         title.setAlignment(Qt.AlignCenter)
         root.addWidget(title)
 
@@ -172,13 +172,8 @@ class CalibrationTestWindow(QMainWindow):
         left_layout.addWidget(self._field_pair("波束指向（deg）", self.beam_spin, 205, 112), alignment=Qt.AlignLeft)
         left_col.setFixedWidth(225)
 
-        ports_row = QWidget()
-        ports_layout = QHBoxLayout(ports_row)
-        ports_layout.setContentsMargins(0, 0, 0, 0)
-        ports_layout.setSpacing(18)
-        ports_layout.addWidget(self._port_box("串口", self.serial_combo, self.refresh_serial_btn, self.serial_btn))
-        ports_layout.addWidget(self._port_box("转台串口", self.turntable_combo, self.refresh_turntable_btn, self.turntable_btn))
-        ports_layout.addStretch(1)
+        serial_port_box = self._port_box("串口", self.serial_combo, self.refresh_serial_btn, self.serial_btn)
+        turntable_port_box = self._port_box("转台串口", self.turntable_combo, self.refresh_turntable_btn, self.turntable_btn)
         lo_col = self._source_column("本振源功率（dBm）", self.lo_power_spin, self.lo_on_btn, self.lo_off_btn)
         if_col = self._source_column("中频源功率（dBm）", self.if_power_spin, self.if_on_btn, self.if_off_btn)
 
@@ -194,7 +189,8 @@ class CalibrationTestWindow(QMainWindow):
         save_layout.addStretch(1)
 
         layout.addWidget(left_col, 0, 0, 4, 1, Qt.AlignTop | Qt.AlignLeft)
-        layout.addWidget(ports_row, 0, 1, 1, 3, Qt.AlignLeft)
+        layout.addWidget(serial_port_box, 0, 1, Qt.AlignLeft)
+        layout.addWidget(turntable_port_box, 0, 2, Qt.AlignLeft)
         layout.addWidget(self.global_confirm_btn, 0, 4, Qt.AlignRight)
         layout.addWidget(lo_col, 1, 1, 2, 1, Qt.AlignTop | Qt.AlignLeft)
         layout.addWidget(if_col, 1, 2, 2, 1, Qt.AlignTop | Qt.AlignLeft)

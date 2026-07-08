@@ -19,16 +19,17 @@ QFrame#Shell {
 }
 QGroupBox {
     border: 1px solid #b7b7b7;
-    margin-top: 16px;
+    margin-top: 20px;
     background: #ffffff;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
     left: 12px;
-    padding: 0 4px;
+    padding: 0 6px;
     color: #555555;
     font-family: "KaiTi", "SimSun";
-    font-size: 14px;
+    font-size: 17px;
+    font-weight: 600;
 }
 QPushButton {
     min-height: 22px;
@@ -70,19 +71,16 @@ QTextEdit {
     font-family: "SimSun";
     font-size: 14px;
 }
-QLabel#WindowTitle {
-    color: #004093;
-    font-size: 16px;
-    font-weight: 700;
-}
+QLabel#WindowTitle,
 QLabel#SoftTitle {
     color: #004093;
-    font-size: 24px;
+    font-size: 26px;
     font-weight: 800;
 }
 QLabel#SectionNote {
     color: #555555;
     font-family: "KaiTi", "SimSun";
-    font-size: 14px;
+    font-size: 17px;
+    font-weight: 600;
 }
 """
