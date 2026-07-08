@@ -170,12 +170,20 @@ class CalibrationTestWindow(QMainWindow):
         left_layout.addWidget(self.global_reset_btn, alignment=Qt.AlignLeft)
         left_layout.addWidget(self._field_pair("校准频率（GHz）", self.freq_spin, 205, 112), alignment=Qt.AlignLeft)
         left_layout.addWidget(self._field_pair("波束指向（deg）", self.beam_spin, 205, 112), alignment=Qt.AlignLeft)
-        left_col.setFixedWidth(225)
+        left_col.setFixedWidth(205)
 
         serial_port_box = self._port_box("串口", self.serial_combo, self.refresh_serial_btn, self.serial_btn)
         turntable_port_box = self._port_box("转台串口", self.turntable_combo, self.refresh_turntable_btn, self.turntable_btn)
         lo_col = self._source_column("本振源功率（dBm）", self.lo_power_spin, self.lo_on_btn, self.lo_off_btn)
         if_col = self._source_column("中频源功率（dBm）", self.if_power_spin, self.if_on_btn, self.if_off_btn)
+
+        if_confirm_row = QWidget()
+        if_confirm_layout = QHBoxLayout(if_confirm_row)
+        if_confirm_layout.setContentsMargins(0, 0, 0, 0)
+        if_confirm_layout.setSpacing(34)
+        if_confirm_layout.addWidget(if_col, alignment=Qt.AlignTop)
+        if_confirm_layout.addWidget(self.global_confirm_btn, alignment=Qt.AlignTop)
+        if_confirm_layout.addStretch(1)
 
         save_row = QWidget()
         save_layout = QHBoxLayout(save_row)
@@ -191,12 +199,9 @@ class CalibrationTestWindow(QMainWindow):
         layout.addWidget(left_col, 0, 0, 4, 1, Qt.AlignTop | Qt.AlignLeft)
         layout.addWidget(serial_port_box, 0, 1, Qt.AlignLeft)
         layout.addWidget(turntable_port_box, 0, 2, Qt.AlignLeft)
-        layout.addWidget(self.global_confirm_btn, 0, 4, Qt.AlignRight)
         layout.addWidget(lo_col, 1, 1, 2, 1, Qt.AlignTop | Qt.AlignLeft)
-        layout.addWidget(if_col, 1, 2, 2, 1, Qt.AlignTop | Qt.AlignLeft)
-        layout.addWidget(save_row, 3, 1, 1, 4)
-        layout.setColumnStretch(3, 1)
-        layout.setColumnStretch(4, 1)
+        layout.addWidget(if_confirm_row, 1, 2, 2, 1, Qt.AlignTop | Qt.AlignLeft)
+        layout.addWidget(save_row, 3, 1, 1, 2)
 
         self.global_inputs = [
             self.freq_spin,
