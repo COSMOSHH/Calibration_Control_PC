@@ -132,7 +132,7 @@ class PhaseConfigWindow(QMainWindow):
         self.refresh_serial_btn = QPushButton("刷新")
         self.refresh_serial_btn.setFixedWidth(82)
         self.refresh_serial_btn.clicked.connect(self._refresh_serial_ports)
-        self.serial_btn = QPushButton("串口连接")
+        self.serial_btn = QPushButton("USB连接")
         self.serial_btn.setFixedWidth(118)
         self.serial_btn.clicked.connect(self._connect_serial)
         self._refresh_serial_ports()
@@ -146,7 +146,7 @@ class PhaseConfigWindow(QMainWindow):
         serial_layout.setContentsMargins(0, 0, 0, 0)
         serial_layout.setHorizontalSpacing(10)
         serial_layout.setVerticalSpacing(12)
-        serial_layout.addWidget(QLabel("串口"), 0, 0, Qt.AlignRight)
+        serial_layout.addWidget(QLabel("USB"), 0, 0, Qt.AlignRight)
         serial_layout.addWidget(self.serial_combo, 0, 1)
         serial_layout.addWidget(self.refresh_serial_btn, 0, 2)
         serial_layout.addWidget(self.serial_btn, 1, 1, 1, 2, Qt.AlignLeft)
@@ -455,9 +455,9 @@ class PhaseConfigWindow(QMainWindow):
             device = create_device_controller(port, mode=DEVICE_MODE_SERIAL)
             device.connect()
             self.device = device
-            self._feedback(f"串口已连接：{port}")
+            self._feedback(f"USB已连接：{port}")
         except Exception as exc:
-            QMessageBox.warning(self, "串口连接失败", str(exc))
+            QMessageBox.warning(self, "USB连接失败", str(exc))
 
     def _initial_sync(self) -> None:
         """“初始同步”按钮。

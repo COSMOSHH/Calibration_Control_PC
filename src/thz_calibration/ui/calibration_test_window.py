@@ -147,7 +147,7 @@ class CalibrationTestWindow(QMainWindow):
         self.refresh_serial_btn = QPushButton("刷新")
         self.refresh_serial_btn.setFixedWidth(62)
         self.refresh_serial_btn.clicked.connect(self._refresh_serial_ports)
-        self.serial_btn = QPushButton("串口连接")
+        self.serial_btn = QPushButton("USB连接")
         self.serial_btn.setFixedWidth(82)
         self.serial_btn.clicked.connect(self._connect_serial)
         self.turntable_combo = QComboBox()
@@ -173,8 +173,8 @@ class CalibrationTestWindow(QMainWindow):
         left_col.setFixedWidth(205)
         middle_column_width = 318
 
-        serial_port_box = self._port_box("串口", self.serial_combo, self.refresh_serial_btn, self.serial_btn)
-        turntable_port_box = self._port_box("转台串口", self.turntable_combo, self.refresh_turntable_btn, self.turntable_btn)
+        serial_port_box = self._port_box("USB连接", self.serial_combo, self.refresh_serial_btn, self.serial_btn)
+        turntable_port_box = self._port_box("转台连接", self.turntable_combo, self.refresh_turntable_btn, self.turntable_btn)
         lo_col = self._source_column("本振源功率（dBm）", self.lo_power_spin, self.lo_on_btn, self.lo_off_btn)
         if_col = self._source_column("中频源功率（dBm）", self.if_power_spin, self.if_on_btn, self.if_off_btn)
 
@@ -588,9 +588,9 @@ class CalibrationTestWindow(QMainWindow):
             device.connect()
             self.device = device
             self.engine = CalibrationEngine(self.device, self.analyzer)
-            self._message(f"串口已连接：{port}")
+            self._message(f"USB已连接：{port}")
         except Exception as exc:
-            QMessageBox.warning(self, "串口连接失败", str(exc))
+            QMessageBox.warning(self, "USB连接失败", str(exc))
 
     def _connect_turntable(self) -> None:
         """连接真实转台串口，并把当前位置设为 0 deg。"""
@@ -603,7 +603,7 @@ class CalibrationTestWindow(QMainWindow):
             turntable = create_turntable_controller(port, mode=TURNTABLE_MODE_SERIAL)
             turntable.connect()
             self.turntable = turntable
-            self._message(f"转台串口已连接并设零：{port}")
+            self._message(f"转台已连接并设零：{port}")
         except Exception as exc:
             QMessageBox.warning(self, "转台连接失败", str(exc))
 
