@@ -87,7 +87,7 @@ class PhaseConfigWindow(QMainWindow):
         root.addWidget(title)
 
         root.addWidget(self._build_basic_group())
-        root.addWidget(self._build_phase_group(), stretch=1)
+        root.addWidget(self._build_phase_group())
         root.addWidget(self._build_feedback_group(), stretch=1)
 
     def _build_basic_group(self) -> QGroupBox:
@@ -258,7 +258,7 @@ class PhaseConfigWindow(QMainWindow):
         自动计算，θ0 启用，φ0 只作为可编辑占位输入，不参与计算。
         """
         group = QGroupBox("相位/波束设置")
-        group.setFixedHeight(338)
+        group.setFixedHeight(285)
         layout = QGridLayout(group)
         layout.setContentsMargins(34, 28, 34, 24)
         layout.setHorizontalSpacing(22)
@@ -337,8 +337,6 @@ class PhaseConfigWindow(QMainWindow):
         layout.addWidget(self.phase_confirm_btn, 3, 0, Qt.AlignLeft)
         layout.addWidget(self.auto_cal_btn, 3, 1, Qt.AlignLeft)
         layout.addWidget(self.data_send_btn, 3, 2, Qt.AlignLeft)
-        layout.setRowMinimumHeight(4, 20)
-        layout.setRowStretch(4, 1)
 
         self.phase_inputs = list(self.feed_phase_spins.values()) + [self.theta_spin, self.phi_spin, self.beam_checkbox]
         self._sync_phase_input_availability()
@@ -372,7 +370,7 @@ class PhaseConfigWindow(QMainWindow):
     def _build_feedback_group(self) -> QGroupBox:
         """构建底部信息反馈窗，发送 HEX 和操作结果都会追加到这里。"""
         group = QGroupBox("信息反馈窗")
-        group.setMinimumHeight(220)
+        group.setMinimumHeight(180)
         layout = QVBoxLayout(group)
         layout.setContentsMargins(30, 18, 30, 16)
         self.feedback_edit = QTextEdit()
