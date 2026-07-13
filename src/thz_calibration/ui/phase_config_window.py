@@ -293,6 +293,7 @@ class PhaseConfigWindow(QMainWindow):
         layout.addWidget(self.beam_checkbox, 0, 2, 1, 2, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.feed_phase_spins = {}
+        self.feed_enable_checks = {}
         for index, feed_id in enumerate((1, 2, 3, 4)):
             # feed_phase_spins 是 UI1 手动/自动配相共用的相位输入框集合。
             feed_box = QWidget()
@@ -301,11 +302,27 @@ class PhaseConfigWindow(QMainWindow):
             feed_layout.setSpacing(14)
             feed_label = QLabel(f"馈源{feed_id}")
             feed_label.setAlignment(Qt.AlignCenter)
+            enable_check = QCheckBox("使能")
+            enable_check.setChecked(True)
+            enable_check.toggled.connect(
+                lambda checked, feed_id=feed_id: self._on_feed_enable_toggled(feed_id, checked)
+            )
             phase_spin = make_spin(DEFAULT_FEED_PHASE_DEG, FEED_PHASE_MIN_DEG, FEED_PHASE_MAX_DEG, 3, 96)
             phase_spin.setSingleStep(FEED_PHASE_STEP_DEG)
             phase_spin.editingFinished.connect(lambda spin=phase_spin: self._snap_feed_phase_spin(spin))
             self.feed_phase_spins[feed_id] = phase_spin
-            feed_layout.addWidget(feed_label)
+            self.feed_enable_checks[feed_id] = enable_check
+
+            feed_header = QWidget()
+            feed_header_layout = QHBoxLayout(feed_header)
+            feed_header_layout.setContentsMargins(0, 0, 0, 0)
+            feed_header_layout.setSpacing(10)
+            feed_header_layout.addStretch(1)
+            feed_header_layout.addWidget(feed_label)
+            feed_header_layout.addWidget(enable_check)
+            feed_header_layout.addStretch(1)
+
+            feed_layout.addWidget(feed_header)
             feed_layout.addWidget(self._field_pair("相位配置（deg）", phase_spin, 250, label_width=118))
             layout.addWidget(feed_box, 1, index, Qt.AlignHCenter)
             layout.setColumnStretch(index, 1)
@@ -391,7 +408,7 @@ class PhaseConfigWindow(QMainWindow):
         重设基础参数会让已经确认的相位队列失效，因此同步清空 phase_queue，
         并恢复相位区域的可编辑状态。
         """
-        if not self.basic_confirmed and self._basic_inputs_are_default():
+        if not self.basic_confirmed and not self.phase_queue and self._basic_inputs_are_default():
             self._set_toggle_pair(self.basic_reset_btn, self.basic_confirm_btn)
             return
 
@@ -490,7 +507,7 @@ class PhaseConfigWindow(QMainWindow):
 
         恢复四馈源相位、θ0、φ0 和波束配相复选框默认值，同时清空已确认队列。
         """
-        if not self.phase_confirmed and self._phase_inputs_are_default():
+        if not self.phase_confirmed and not self.phase_queue and self._phase_inputs_are_default():
             self._set_toggle_pair(self.phase_reset_btn, self.phase_confirm_btn)
             return
 
@@ -615,16 +632,8 @@ class PhaseConfigWindow(QMainWindow):
             QMessageBox.warning(self, "发送失败", "请先执行相位确认或自动校准。")
             self._feedback("发送失败：发送队列为空。")
             return
-        frame = self.device.encode_feed_states(self.phase_queue)
-        self._feedback("发送数据：")
-        self._feedback(self._format_queue_payload())
-        self._feedback(f"发送帧HEX：{frame.hex(' ')}")
-        response = self.device.apply_feed_states(self.phase_queue)
-        if response.ok:
-            self._feedback("发送成功。")
-        else:
-            self._feedback(f"发送失败：{response.message}")
-            QMessageBox.warning(self, "发送失败", response.message)
+        self._sync_phase_queue_enabled()
+        self._send_feed_states(self.phase_queue)
 
     def _calculate_beam_phases(self) -> dict[int, float]:
         """按波束指向角计算四个馈源相位。
@@ -672,12 +681,83 @@ class PhaseConfigWindow(QMainWindow):
     def _build_phase_queue(self, phases: dict[int, float]) -> list[FeedState]:
         """把相位字典转换为下发队列。
 
-        所有相位统一按 0~360 deg 取模，并默认四个馈源都 enabled。
+        所有相位统一按 0~360 deg 取模，使能状态来自四个馈源勾选框。
         """
         return [
-            FeedState(feed_id=feed_id, phase_deg=phase % 360.0, amplitude=DEFAULTS.default_amplitude, enabled=True)
+            FeedState(
+                feed_id=feed_id,
+                phase_deg=phase % 360.0,
+                amplitude=DEFAULTS.default_amplitude,
+                enabled=self._feed_is_enabled(feed_id),
+            )
             for feed_id, phase in sorted(phases.items())
         ]
+
+    def _on_feed_enable_toggled(self, feed_id: int, checked: bool) -> None:
+        """任一馈源使能变化后，下发包含四路相位和使能状态的完整数据帧。"""
+        if not self._prepare_phase_queue_for_enable_send():
+            return
+
+        state_text = "开启" if checked else "关闭"
+        self._feedback(f"馈源{feed_id}使能{state_text}，发送完整数据帧。")
+        self._send_feed_states(self.phase_queue, warning_title="使能发送失败")
+
+    def _prepare_phase_queue_for_enable_send(self) -> bool:
+        """确保使能勾选变化时有一组完整四馈源状态可发送。"""
+        if self.phase_queue:
+            self._sync_phase_queue_enabled()
+            return True
+
+        phases = self._read_current_phases_for_enable_send()
+        if phases is None:
+            self._feedback("使能发送失败：当前相位输入无效，未生成完整数据帧。")
+            return False
+
+        self.phase_queue = self._build_phase_queue(phases)
+        return True
+
+    def _read_current_phases_for_enable_send(self) -> dict[int, float] | None:
+        """使能变化但还没有发送队列时，从当前界面读取四路相位。"""
+        if self.beam_checkbox.isChecked():
+            values = self._read_required_spins(
+                (
+                    (self.output_freq_spin, "输出频率"),
+                    (self.theta_spin, "波束指向角度 θ₀"),
+                )
+            )
+            if values is None:
+                return None
+            phases = self._calculate_beam_phases()
+            for feed_id, phase in phases.items():
+                self.feed_phase_spins[feed_id].setValue(phase)
+            return phases
+
+        return self._read_feed_phase_spins()
+
+    def _sync_phase_queue_enabled(self) -> None:
+        """把四个使能勾选框的当前状态同步到待发送队列。"""
+        for state in self.phase_queue:
+            state.enabled = self._feed_is_enabled(state.feed_id)
+
+    def _feed_is_enabled(self, feed_id: int) -> bool:
+        """读取单个馈源的使能勾选状态；控件尚未创建时保持兼容的启用默认值。"""
+        checkbox = getattr(self, "feed_enable_checks", {}).get(feed_id)
+        return True if checkbox is None else checkbox.isChecked()
+
+    def _send_feed_states(self, feed_states: list[FeedState], warning_title: str = "发送失败") -> bool:
+        """打印并发送完整 FeedState 数据帧，供按钮发送和使能切换复用。"""
+        frame = self.device.encode_feed_states(feed_states)
+        self._feedback("发送数据：")
+        self._feedback(self._format_queue_payload(feed_states))
+        self._feedback(f"发送帧HEX：{frame.hex(' ')}")
+        response = self.device.apply_feed_states(feed_states)
+        if response.ok:
+            self._feedback("发送成功。")
+            return True
+
+        self._feedback(f"发送失败：{response.message}")
+        QMessageBox.warning(self, warning_title, response.message)
+        return False
 
     def _snap_feed_phase_spin(self, spin: QDoubleSpinBox) -> None:
         """输入结束后把馈源相位吸附到最近的 5.625 deg 点。"""
@@ -727,10 +807,11 @@ class PhaseConfigWindow(QMainWindow):
         steps = max(0, min(FEED_PHASE_STEP_COUNT, steps))
         return round(steps * FEED_PHASE_STEP_DEG, 3)
 
-    def _format_queue_payload(self) -> str:
+    def _format_queue_payload(self, feed_states: list[FeedState] | None = None) -> str:
         """格式化当前 phase_queue，供信息反馈窗展示。"""
         lines = []
-        for state in self.phase_queue:
+        states = self.phase_queue if feed_states is None else feed_states
+        for state in states:
             lines.append(
                 f"Feed{state.feed_id}: phase={state.phase_deg:.6f} deg, "
                 f"enabled={state.enabled}"
