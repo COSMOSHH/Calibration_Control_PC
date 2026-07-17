@@ -47,6 +47,7 @@ python run_app.py --config --serial-port COM3
 |------|--------|
 | 频谱仪 VISA 地址 | `TCPIP::10.18.18.2::INSTR` |
 | 频谱仪配置档位 | `research` |
+| 频谱仪扫频宽度 | 1.0 GHz |
 | 测试频点 | 212 GHz |
 | 波束指向角 | 30 deg |
 | UI1 波束配相 θ₀ 默认值 | 0 deg |

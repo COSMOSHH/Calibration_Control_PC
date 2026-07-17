@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -65,8 +65,9 @@ class CalibrationTestWindow(QMainWindow):
         # device/analyzer 默认由配置决定是 simulated 还是真实设备。
         self.device = create_device_controller(self.serial_port_default)
         self.analyzer = create_spectrum_analyzer()
-        self.device.connect()
-        self.analyzer.connect()
+        self.startup_warnings: list[str] = []
+        self._connect_device_at_startup()
+        self._connect_analyzer_at_startup()
         self.signal_source_controller = None
         self.lo_source_enabled = False
         self.if_source_enabled = False
@@ -76,6 +77,13 @@ class CalibrationTestWindow(QMainWindow):
         self.engine = CalibrationEngine(self.device, self.analyzer)
 
         self._build_ui()
+        if self.analyzer.is_connected():
+            try:
+                self._sync_analyzer_frequency(self.freq_spin.value())
+            except Exception as exc:
+                self.startup_warnings.append(self._format_analyzer_setup_message(exc))
+        if self.startup_warnings:
+            QTimer.singleShot(0, self._show_startup_warnings)
 
     def _build_ui(self) -> None:
         """组装 UI0 的三类区域：全局设置、Feed1 测试、Feed2~4 扫描。"""
@@ -96,6 +104,24 @@ class CalibrationTestWindow(QMainWindow):
         root.addWidget(self._build_feed1_group())
         for feed_id in (2, 3, 4):
             root.addWidget(self._build_feed_scan_group(feed_id))
+
+    def _connect_device_at_startup(self) -> None:
+        try:
+            self.device.connect()
+        except Exception as exc:
+            self.startup_warnings.append(
+                "下位机启动连接失败，请在界面选择正确串口后点击“串口连接”。\n"
+                f"错误：{exc}"
+            )
+
+    def _connect_analyzer_at_startup(self) -> None:
+        try:
+            self.analyzer.connect()
+        except Exception as exc:
+            self.startup_warnings.append(self._format_analyzer_connection_message(exc))
+
+    def _show_startup_warnings(self) -> None:
+        QMessageBox.warning(self, "设备连接提示", "\n\n".join(self.startup_warnings))
 
     def _build_global_group(self) -> QGroupBox:
         """构建全局设置区。
@@ -423,8 +449,13 @@ class CalibrationTestWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "转台控制失败", str(exc))
             return
+        try:
+            analyzer_text = self._sync_analyzer_frequency()
+        except Exception as exc:
+            QMessageBox.warning(self, "频谱仪设置失败", self._format_analyzer_setup_message(exc))
+            return
         lock_widgets(self.global_inputs, True)
-        self._message(f"全局设置已确认。\n\n{signal_source_text}\n\n{turntable_text}")
+        self._message(f"全局设置已确认。\n\n{signal_source_text}\n\n{turntable_text}\n\n{analyzer_text}")
 
     def _signal_source_settings_text(self) -> str:
         frequencies = self._lookup_signal_source_frequencies()
@@ -665,6 +696,9 @@ class CalibrationTestWindow(QMainWindow):
         Feed1 是固定相位单点测试；Feed2~4 按界面起/止/步长扫描。
         扫描完成后保存对应 Excel，并把最佳相位缓存起来供下一阶段继承。
         """
+        if not self._ensure_scan_devices_ready():
+            return
+
         if feed_id == 1:
             phase_start = self.feed1_phase_spin.value()
             phase_end = self.feed1_phase_spin.value()
@@ -687,6 +721,7 @@ class CalibrationTestWindow(QMainWindow):
             sample_count=DEFAULTS.sample_count,
         )
         try:
+            self._sync_analyzer_frequency(config.frequency_ghz)
             # Engine 负责下发/采样；UI 层负责保存结果和弹窗提示。
             result = self.engine.scan_feed(config, self._feed_states_for_scan(feed_id), on_log=lambda _: None)
             output = self.exporter.save_scan_result(result)
@@ -704,6 +739,51 @@ class CalibrationTestWindow(QMainWindow):
             self._message(text)
         except Exception as exc:
             QMessageBox.warning(self, "测试失败", str(exc))
+
+    def _ensure_scan_devices_ready(self) -> bool:
+        if not self.device.is_connected():
+            QMessageBox.warning(self, "下位机未连接", "请先选择正确串口并点击“串口连接”。")
+            return False
+
+        if self.analyzer.is_connected():
+            return True
+
+        try:
+            self.analyzer.connect()
+        except Exception as exc:
+            QMessageBox.warning(self, "频谱仪连接失败", self._format_analyzer_connection_message(exc))
+            return False
+        return True
+
+    def _sync_analyzer_frequency(self, frequency_ghz: float | None = None) -> str:
+        if frequency_ghz is None:
+            frequency_ghz = self.freq_spin.value()
+        if not self.analyzer.is_connected():
+            self.analyzer.connect()
+        self.analyzer.configure_sweep_for_frequency(float(frequency_ghz))
+        text = self._analyzer_frequency_text(float(frequency_ghz))
+        print(text, flush=True)
+        return text
+
+    def _analyzer_frequency_text(self, frequency_ghz: float) -> str:
+        divisor = getattr(self.analyzer, "frequency_divisor", 1.0)
+        span_ghz = getattr(self.analyzer, "sweep_span_ghz", DEFAULTS.spectrum_analyzer_span_ghz)
+        return (
+            f"频谱仪已同步：校准频率 {frequency_ghz:g} GHz -> "
+            f"观察中心 {frequency_ghz / divisor:g} GHz，扫宽 {span_ghz / divisor:g} GHz。"
+        )
+
+    def _format_analyzer_connection_message(self, exc: Exception) -> str:
+        address = getattr(self.analyzer, "address", DEFAULTS.visa_address)
+        return (
+            f"频谱仪未连接，当前 VISA 地址：{address}\n"
+            f"{exc}\n\n"
+            "请确认频谱仪 IP、VISA 后端和资源名；NI MAX/Keysight Connection Expert 中能看到的完整资源名，"
+            "需要和 config.py 的 visa_address 保持一致。"
+        )
+
+    def _format_analyzer_setup_message(self, exc: Exception) -> str:
+        return f"频谱仪已连接，但扫频参数同步失败。\n{exc}"
 
     def _show_latest(self, feed_id: int) -> None:
         """显示最近一次生成的关联数据文件路径或默认文件名。"""
