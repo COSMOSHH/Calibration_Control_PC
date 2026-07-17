@@ -43,15 +43,19 @@ class AppDefaults:
     # 调试无硬件时保持 simulated；实机下发给 STM32 时改成 serial。
     device_mode: str = DEVICE_MODE_SIMULATED
     # 调试无频谱仪时保持 simulated；接真实频谱仪时改成 visa。
-    spectrum_analyzer_mode: str = SPECTRUM_MODE_SIMULATED
+    spectrum_analyzer_mode: str = SPECTRUM_MODE_VISA
     # 真实频谱仪选择档位：research 使用研究院现有 TCPIP/VISA 方式，xian_gpib 使用西安所 GPIB 方式。
     spectrum_analyzer_profile: str = SPECTRUM_ANALYZER_PROFILE_RESEARCH
     # 研究院现有频谱仪的 pyvisa 资源地址，实机联调连接失败时优先检查这里。
-    visa_address: str = "TCPIP::10.18.18.2::INSTR"
+    visa_address: str = "TCPIP0::10.18.18.4::5025::SOCKET"
     # 西安研究所已验证的 FSQ40 GPIB 地址。
     xian_gpib_visa_address: str = "GPIB0::20::INSTR"
     # 真实频谱仪连接超时。
     spectrum_analyzer_timeout_ms: int = 5000
+    # 真实频谱仪读数前自动设置的扫频宽度，中心频率来自 UI0 当前校准频率。
+    spectrum_analyzer_span_ghz: float = 1.0
+    # 频谱仪实际观察频率换算系数：无扩频模块调试时按“当前校准频率 / 10”观察；正式接扩频模块时改为 1.0。
+    spectrum_analyzer_frequency_divisor: float = 10.0
     # 信号源默认手动控制，避免无仪器或地址未配置时误下发 VISA/SCPI 命令。 TCPIP::0.0.0.0::INSTR
     signal_source_control_mode: str = SIGNAL_SOURCE_CONTROL_MANUAL
     lo_signal_source_visa_address: str = "TCPIP0::10.18.18.4::hislip0::INSTR"
@@ -148,8 +152,15 @@ def create_spectrum_analyzer(mode: str | None = None):
             return XianGpibSpectrumAnalyzer(
                 DEFAULTS.xian_gpib_visa_address,
                 DEFAULTS.spectrum_analyzer_timeout_ms,
+                DEFAULTS.spectrum_analyzer_span_ghz,
+                DEFAULTS.spectrum_analyzer_frequency_divisor,
             )
-        return VisaSpectrumAnalyzer(DEFAULTS.visa_address, DEFAULTS.spectrum_analyzer_timeout_ms)
+        return VisaSpectrumAnalyzer(
+            DEFAULTS.visa_address,
+            DEFAULTS.spectrum_analyzer_timeout_ms,
+            DEFAULTS.spectrum_analyzer_span_ghz,
+            DEFAULTS.spectrum_analyzer_frequency_divisor,
+        )
 
     return SimulatedSpectrumAnalyzer(DEFAULTS.visa_address)
 
