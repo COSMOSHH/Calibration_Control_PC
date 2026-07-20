@@ -34,9 +34,10 @@ GHZ_TO_HZ = 1.0e9 # 输出频率输入单位是 GHz，计算时需要换算成 H
 DEFAULT_BEAM_THETA_DEG = 0.0 # 波束指向角 θ0 的默认值；UI0 校准记录里的波束角默认值在 config.py。
 DEFAULT_FEED_PHASE_DEG = 0.0 
 FEED_PHASE_MIN_DEG = 0.0
-FEED_PHASE_MAX_DEG = 360.0
+FEED_PHASE_PERIOD_DEG = 360.0
 FEED_PHASE_STEP_DEG = DEFAULTS.phase_step_deg
-FEED_PHASE_STEP_COUNT = int(round((FEED_PHASE_MAX_DEG - FEED_PHASE_MIN_DEG) / FEED_PHASE_STEP_DEG))
+FEED_PHASE_STEP_COUNT = int(round((FEED_PHASE_PERIOD_DEG - FEED_PHASE_MIN_DEG) / FEED_PHASE_STEP_DEG))
+FEED_PHASE_MAX_DEG = round(FEED_PHASE_MIN_DEG + (FEED_PHASE_STEP_COUNT - 1) * FEED_PHASE_STEP_DEG, 3)
 FEED_PHASE_TOLERANCE_DEG = 1e-6
 
 
@@ -639,7 +640,7 @@ class PhaseConfigWindow(QMainWindow):
         """按波束指向角计算四个馈源相位。
 
         θ0 界面输入单位为 deg，这里先换算为 rad 再进入 sin()。
-        返回值已经按 0~360 deg 取模；φ0 当前不参与计算。
+        返回值已经按 [0, 360) deg 取模；φ0 当前不参与计算。
         """
         frequency_hz = self.output_freq_spin.value() * GHZ_TO_HZ # 输出频率输入单位是 GHz，计算时需要换算成 Hz。
         theta_rad = self.theta_spin.value() * pi / 180.0
@@ -681,12 +682,12 @@ class PhaseConfigWindow(QMainWindow):
     def _build_phase_queue(self, phases: dict[int, float]) -> list[FeedState]:
         """把相位字典转换为下发队列。
 
-        所有相位统一按 0~360 deg 取模，使能状态来自四个馈源勾选框。
+        所有相位统一按 [0, 360) deg 取模，使能状态来自四个馈源勾选框。
         """
         return [
             FeedState(
                 feed_id=feed_id,
-                phase_deg=phase % 360.0,
+                phase_deg=self._normalize_feed_phase(phase),
                 amplitude=DEFAULTS.default_amplitude,
                 enabled=self._feed_is_enabled(feed_id),
             )
@@ -780,15 +781,20 @@ class PhaseConfigWindow(QMainWindow):
             if not self._is_valid_feed_phase(phase)
         ]
         if invalid:
-            message = f"馈源相位必须在 0~360 deg，且为 {FEED_PHASE_STEP_DEG:g} deg 的整数倍。"
+            message = (
+                f"馈源相位必须在 [0, 360) deg，且为 {FEED_PHASE_STEP_DEG:g} deg 的整数倍"
+                f"（最大 {FEED_PHASE_MAX_DEG:g} deg）。"
+            )
             QMessageBox.warning(self, "相位配置无效", message)
             self._feedback(f"相位配置无效：{message} 非法输入：{'；'.join(invalid)}。")
             return None
         return phases
 
     def _is_valid_feed_phase(self, phase: float) -> bool:
-        """判断相位是否位于 0~360 且落在 5.625 deg 栅格上。"""
+        """判断相位是否位于 [0, 360) 且落在 5.625 deg 栅格上。"""
         if phase < FEED_PHASE_MIN_DEG - FEED_PHASE_TOLERANCE_DEG:
+            return False
+        if phase >= FEED_PHASE_PERIOD_DEG - FEED_PHASE_TOLERANCE_DEG:
             return False
         if phase > FEED_PHASE_MAX_DEG + FEED_PHASE_TOLERANCE_DEG:
             return False
@@ -797,15 +803,26 @@ class PhaseConfigWindow(QMainWindow):
 
     def _quantize_feed_phase(self, phase: float) -> float:
         """把公式计算值量化到 5.625 deg 栅格。"""
-        wrapped = phase % FEED_PHASE_MAX_DEG
-        return self._quantize_feed_phase_input(wrapped)
+        wrapped = phase % FEED_PHASE_PERIOD_DEG
+        steps = round(wrapped / FEED_PHASE_STEP_DEG) % FEED_PHASE_STEP_COUNT
+        return round(steps * FEED_PHASE_STEP_DEG, 3)
 
     def _quantize_feed_phase_input(self, phase: float) -> float:
-        """把输入值量化到 0~360 范围内最近的 5.625 deg 点。"""
+        """把输入值量化到 [0, 360) 范围内最近的 5.625 deg 点。"""
         bounded = min(max(phase, FEED_PHASE_MIN_DEG), FEED_PHASE_MAX_DEG)
         steps = round(bounded / FEED_PHASE_STEP_DEG)
-        steps = max(0, min(FEED_PHASE_STEP_COUNT, steps))
+        steps = max(0, min(FEED_PHASE_STEP_COUNT - 1, steps))
         return round(steps * FEED_PHASE_STEP_DEG, 3)
+
+    def _normalize_feed_phase(self, phase: float) -> float:
+        """把下发相位归一化到 [0, 360)，避免队列里出现 360 deg。"""
+        normalized = phase % FEED_PHASE_PERIOD_DEG
+        if (
+            abs(normalized) < FEED_PHASE_TOLERANCE_DEG
+            or abs(normalized - FEED_PHASE_PERIOD_DEG) < FEED_PHASE_TOLERANCE_DEG
+        ):
+            return 0.0
+        return normalized
 
     def _format_queue_payload(self, feed_states: list[FeedState] | None = None) -> str:
         """格式化当前 phase_queue，供信息反馈窗展示。"""
@@ -829,10 +846,10 @@ class PhaseConfigWindow(QMainWindow):
         for feed_id, desired_phase in desired_phases.items():
             best = self.exporter.read_best_feed_point(feed_id)
             if best is None:
-                calibrated[feed_id] = desired_phase % 360.0
+                calibrated[feed_id] = self._normalize_feed_phase(desired_phase)
                 missing.append(feed_id)
                 continue
-            calibrated[feed_id] = (desired_phase + best[0]) % 360.0
+            calibrated[feed_id] = self._normalize_feed_phase(desired_phase + best[0])
         return calibrated, missing
 
     def _has_required_basic(self) -> bool:
