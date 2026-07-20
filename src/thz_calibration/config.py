@@ -43,7 +43,7 @@ class AppDefaults:
     # 调试无硬件时保持 simulated；实机下发给 STM32 时改成 serial。
     device_mode: str = DEVICE_MODE_SIMULATED
     # 调试无频谱仪时保持 simulated；接真实频谱仪时改成 visa。
-    spectrum_analyzer_mode: str = SPECTRUM_MODE_VISA
+    spectrum_analyzer_mode: str = SPECTRUM_MODE_SIMULATED
     # 真实频谱仪选择档位：research 使用研究院现有 TCPIP/VISA 方式，xian_gpib 使用西安所 GPIB 方式。
     spectrum_analyzer_profile: str = SPECTRUM_ANALYZER_PROFILE_RESEARCH
     # 研究院现有频谱仪的 pyvisa 资源地址，实机联调连接失败时优先检查这里。
