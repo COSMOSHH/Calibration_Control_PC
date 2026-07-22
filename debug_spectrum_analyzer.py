@@ -13,7 +13,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from thz_calibration.config import DEFAULTS
-from thz_calibration.instruments.spectrum_analyzer import _visa_resource_candidates
+from thz_calibration.instruments.spectrum_analyzer import (
+    _mapped_sweep_settings,
+    _sweep_settings_commands,
+    _visa_resource_candidates,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,6 +26,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--center-ghz", type=float, default=DEFAULTS.frequency_ghz, help="校准频率，单位 GHz")
     parser.add_argument("--span-ghz", type=float, default=DEFAULTS.spectrum_analyzer_span_ghz, help="校准扫宽，单位 GHz")
     parser.add_argument(
+        "--sweep-points",
+        type=int,
+        default=DEFAULTS.spectrum_analyzer_scan_points,
+        help="频率扫描点数，默认读取 config.py",
+    )
+    parser.add_argument(
+        "--rbw-hz",
+        "--if-bandwidth-hz",
+        dest="rbw_hz",
+        type=float,
+        default=DEFAULTS.spectrum_analyzer_rbw_hz,
+        help="分辨率带宽 RBW（Resolution Bandwidth），单位 Hz",
+    )
+    parser.add_argument(
+        "--vbw-hz",
+        dest="vbw_hz",
+        type=float,
+        default=DEFAULTS.spectrum_analyzer_vbw_hz,
+        help="视频带宽 VBW（Video Bandwidth），单位 Hz",
+    )
+    parser.add_argument(
         "--frequency-divisor",
         type=float,
         default=DEFAULTS.spectrum_analyzer_frequency_divisor,
@@ -29,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--timeout-ms", type=int, default=10000, help="VISA 超时时间，单位 ms")
     parser.add_argument("--settle-s", type=float, default=0.5, help="marker 寻峰后等待时间，单位秒")
-    parser.add_argument("--skip-configure", action="store_true", help="只读取当前屏幕状态，不下发中心频率/扫宽")
+    parser.add_argument("--skip-configure", action="store_true", help="只读取当前屏幕状态，不下发扫频参数")
     return parser.parse_args()
 
 
@@ -114,14 +139,31 @@ def query_float(query: Callable[[str], str | None], command: str) -> float | Non
         return None
 
 
-def print_setpoint_check(name: str, target_hz: float, actual_hz: float | None) -> None:
-    print(f"{name}目标值: {target_hz:.6f} Hz")
-    if actual_hz is None:
+def print_setpoint_check(
+    name: str,
+    target: float,
+    actual: float | None,
+    unit: str = "Hz",
+    abs_tolerance: float | None = None,
+) -> None:
+    suffix = f" {unit}" if unit else ""
+    print(f"{name}目标值: {target:.6f}{suffix}")
+    if actual is None:
         print(f"{name}实际值: 读取失败")
         return
-    print(f"{name}实际值: {actual_hz:.6f} Hz")
-    if abs(actual_hz - target_hz) > max(abs(target_hz) * 1e-6, 1.0):
-        print(f"提示: {name}设置后回读不一致，仪器可能拒绝该频率/扫宽或需要其他模式。")
+    print(f"{name}实际值: {actual:.6f}{suffix}")
+    if abs_tolerance is None:
+        abs_tolerance = 1.0 if unit == "Hz" else 1e-9
+    if abs(actual - target) > max(abs(target) * 1e-6, abs_tolerance):
+        print(f"提示: {name}设置后回读不一致，仪器可能拒绝该设置或需要其他模式。")
+
+
+def print_actual_value(name: str, actual: float | None, unit: str = "") -> None:
+    suffix = f" {unit}" if unit else ""
+    if actual is None:
+        print(f"{name}: 读取失败")
+        return
+    print(f"{name}: {actual:.6f}{suffix}")
 
 
 def read_marker(query: Callable[[str], str | None], x_command: str, y_command: str, label: str) -> None:
@@ -150,6 +192,12 @@ def run_diagnostics() -> None:
     args = parse_args()
     if args.frequency_divisor <= 0:
         raise ValueError("--frequency-divisor must be positive")
+    if args.sweep_points <= 0:
+        raise ValueError("--sweep-points must be positive")
+    if args.rbw_hz <= 0:
+        raise ValueError("--rbw-hz must be positive")
+    if args.vbw_hz <= 0:
+        raise ValueError("--vbw-hz must be positive")
 
     try:
         import pyvisa
@@ -163,6 +211,10 @@ def run_diagnostics() -> None:
     print(f"divisor        : {args.frequency_divisor}")
     print(f"SA center GHz  : {args.center_ghz / args.frequency_divisor}")
     print(f"SA span GHz    : {args.span_ghz / args.frequency_divisor}")
+    print(f"sweep points   : {args.sweep_points}")
+    print("sweep time     : analyzer default (read back only)")
+    print(f"RBW            : {args.rbw_hz} Hz")
+    print(f"VBW            : {args.vbw_hz} Hz")
     print(f"timeout ms : {args.timeout_ms}")
 
     rm = None
@@ -181,6 +233,10 @@ def run_diagnostics() -> None:
         query("SENSe:FREQuency:SPAN?")
         query("SENSe:FREQuency:STARt?")
         query("SENSe:FREQuency:STOP?")
+        query("SENSe:SWEep:POINts?")
+        query("SENSe:SWEep:TIME?")
+        query("SENSe:BANDwidth:RESolution?")
+        query("SENSe:BANDwidth:VIDeo?")
         query("UNIT:POWer?")
         drain_errors(query, "状态查询后错误队列")
 
@@ -192,15 +248,29 @@ def run_diagnostics() -> None:
         drain_errors(query, "测试 1 后错误队列")
 
         if not args.skip_configure:
-            print_section("测试 2: 设置中心频率/扫宽后寻峰")
-            center_hz = args.center_ghz / args.frequency_divisor * 1e9
-            span_hz = args.span_ghz / args.frequency_divisor * 1e9
-            write(f"SENSe:FREQuency:CENTer {center_hz:.12g}")
-            write(f"SENSe:FREQuency:SPAN {span_hz:.12g}")
-            actual_center_hz = query_float(query, "SENSe:FREQuency:CENTer?")
-            actual_span_hz = query_float(query, "SENSe:FREQuency:SPAN?")
-            print_setpoint_check("中心频率", center_hz, actual_center_hz)
-            print_setpoint_check("扫宽", span_hz, actual_span_hz)
+            print_section("测试 2: 设置起止频率/点数/RBW/VBW后寻峰")
+            settings = _mapped_sweep_settings(
+                args.center_ghz,
+                args.span_ghz,
+                args.frequency_divisor,
+                args.sweep_points,
+                args.rbw_hz,
+                args.vbw_hz,
+            )
+            for command in _sweep_settings_commands(settings):
+                write(command)
+            actual_start_hz = query_float(query, "SENSe:FREQuency:STARt?")
+            actual_stop_hz = query_float(query, "SENSe:FREQuency:STOP?")
+            actual_points = query_float(query, "SENSe:SWEep:POINts?")
+            actual_sweep_time = query_float(query, "SENSe:SWEep:TIME?")
+            actual_rbw_hz = query_float(query, "SENSe:BANDwidth:RESolution?")
+            actual_vbw_hz = query_float(query, "SENSe:BANDwidth:VIDeo?")
+            print_setpoint_check("起始频率", settings.start_ghz * 1e9, actual_start_hz)
+            print_setpoint_check("终止频率", settings.stop_ghz * 1e9, actual_stop_hz)
+            print_setpoint_check("扫描点数", float(settings.points), actual_points, "点", abs_tolerance=0.5)
+            print_actual_value("仪器实际扫频时间", actual_sweep_time, "s")
+            print_setpoint_check("RBW", settings.rbw_hz, actual_rbw_hz)
+            print_setpoint_check("VBW", settings.vbw_hz, actual_vbw_hz)
             write("CALCulate:MARKer1:MAXimum")
             time.sleep(args.settle_s)
             read_marker(query, "CALCulate:MARKer1:X?", "CALCulate:MARKer1:Y?", "测试 2 结果")

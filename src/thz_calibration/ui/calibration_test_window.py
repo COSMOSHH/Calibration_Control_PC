@@ -768,9 +768,13 @@ class CalibrationTestWindow(QMainWindow):
     def _analyzer_frequency_text(self, frequency_ghz: float) -> str:
         divisor = getattr(self.analyzer, "frequency_divisor", 1.0)
         span_ghz = getattr(self.analyzer, "sweep_span_ghz", DEFAULTS.spectrum_analyzer_span_ghz)
+        sweep_points = getattr(self.analyzer, "sweep_points", DEFAULTS.spectrum_analyzer_scan_points)
+        rbw_hz = getattr(self.analyzer, "rbw_hz", DEFAULTS.spectrum_analyzer_rbw_hz)
+        vbw_hz = getattr(self.analyzer, "vbw_hz", DEFAULTS.spectrum_analyzer_vbw_hz)
         return (
             f"频谱仪已同步：校准频率 {frequency_ghz:g} GHz -> "
-            f"观察中心 {frequency_ghz / divisor:g} GHz，扫宽 {span_ghz / divisor:g} GHz。"
+            f"观察中心 {frequency_ghz / divisor:g} GHz，扫宽 {span_ghz / divisor:g} GHz，"
+            f"{sweep_points} 点，RBW {rbw_hz:g} Hz，VBW {vbw_hz:g} Hz。"
         )
 
     def _format_analyzer_connection_message(self, exc: Exception) -> str:

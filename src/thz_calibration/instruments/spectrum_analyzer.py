@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 import random
 import time
@@ -35,6 +36,15 @@ class SpectrumAnalyzer(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class _SweepSettings:
+    start_ghz: float
+    stop_ghz: float
+    points: int
+    rbw_hz: float
+    vbw_hz: float
+
+
 def _mapped_sweep_range_ghz(
     frequency_ghz: float,
     span_ghz: float,
@@ -49,23 +59,68 @@ def _mapped_sweep_range_ghz(
     return (frequency_ghz / frequency_divisor, span_ghz / frequency_divisor)
 
 
-def _sweep_range_ghz(
+def _mapped_sweep_settings(
+    frequency_ghz: float,
+    span_ghz: float,
+    frequency_divisor: float,
+    sweep_points: int,
+    rbw_hz: float,
+    vbw_hz: float,
+) -> _SweepSettings:
+    center_ghz, mapped_span_ghz = _mapped_sweep_range_ghz(frequency_ghz, span_ghz, frequency_divisor)
+    if sweep_points <= 0:
+        raise ValueError("spectrum analyzer sweep points must be positive")
+    if rbw_hz <= 0:
+        raise ValueError("spectrum analyzer RBW must be positive")
+    if vbw_hz <= 0:
+        raise ValueError("spectrum analyzer VBW must be positive")
+
+    half_span_ghz = mapped_span_ghz / 2.0
+    start_ghz = center_ghz - half_span_ghz
+    stop_ghz = center_ghz + half_span_ghz
+    if start_ghz <= 0:
+        raise ValueError("spectrum analyzer start frequency must be positive")
+
+    return _SweepSettings(
+        start_ghz=start_ghz,
+        stop_ghz=stop_ghz,
+        points=sweep_points,
+        rbw_hz=rbw_hz,
+        vbw_hz=vbw_hz,
+    )
+
+
+def _sweep_settings(
     context: MeasurementContext | None,
     span_ghz: float,
-    frequency_divisor: float = 1.0,
-) -> tuple[float, float] | None:
+    frequency_divisor: float,
+    sweep_points: int,
+    rbw_hz: float,
+    vbw_hz: float,
+) -> _SweepSettings | None:
     if context is None:
         return None
-    return _mapped_sweep_range_ghz(context.frequency_ghz, span_ghz, frequency_divisor)
+    return _mapped_sweep_settings(
+        context.frequency_ghz,
+        span_ghz,
+        frequency_divisor,
+        sweep_points,
+        rbw_hz,
+        vbw_hz,
+    )
 
 
-def _sweep_range_commands(sweep_range_ghz: tuple[float, float]) -> tuple[str, str]:
-    center_ghz, span_ghz = sweep_range_ghz
-    center_hz = center_ghz * 1e9
-    span_hz = span_ghz * 1e9
+def _sweep_settings_commands(settings: _SweepSettings) -> tuple[str, ...]:
+    start_hz = settings.start_ghz * 1e9
+    stop_hz = settings.stop_ghz * 1e9
     return (
-        f"SENSe:FREQuency:CENTer {center_hz:.12g}",
-        f"SENSe:FREQuency:SPAN {span_hz:.12g}",
+        f"SENSe:FREQuency:STARt {start_hz:.12g}",
+        f"SENSe:FREQuency:STOP {stop_hz:.12g}",
+        f"SENSe:SWEep:POINts {settings.points}",
+        # Sweep time is intentionally left to the analyzer default.
+        # f"SENSe:SWEep:TIME {sweep_time_s:.12g}",
+        f"SENSe:BANDwidth:RESolution {settings.rbw_hz:.12g}",
+        f"SENSe:BANDwidth:VIDeo {settings.vbw_hz:.12g}",
     )
 
 
@@ -135,8 +190,21 @@ class SimulatedSpectrumAnalyzer:
     这样 UI0 的扫描、最佳点选择、Excel 标红都能在没有仪器的情况下验证。
     """
 
-    def __init__(self, address: str = "SIMULATED") -> None:
+    def __init__(
+        self,
+        address: str = "SIMULATED",
+        sweep_span_ghz: float = 0.002,
+        frequency_divisor: float = 1.0,
+        sweep_points: int = 201,
+        rbw_hz: float = 1000.0,
+        vbw_hz: float = 1000.0,
+    ) -> None:
         self.address = address
+        self.sweep_span_ghz = sweep_span_ghz
+        self.frequency_divisor = frequency_divisor
+        self.sweep_points = sweep_points
+        self.rbw_hz = rbw_hz
+        self.vbw_hz = vbw_hz
         self._connected = False
         # 固定随机种子保证调试时每次运行的模拟曲线大致一致。
         self._rng = random.Random(504)
@@ -187,8 +255,14 @@ class SimulatedSpectrumAnalyzer:
 
     def configure_sweep_for_frequency(self, frequency_ghz: float) -> None:
         """模拟频谱仪不需要下发扫频设置，但保留接口供 UI 统一调用。"""
-        if frequency_ghz <= 0:
-            raise ValueError("spectrum analyzer center frequency must be positive")
+        _mapped_sweep_settings(
+            frequency_ghz,
+            self.sweep_span_ghz,
+            self.frequency_divisor,
+            self.sweep_points,
+            self.rbw_hz,
+            self.vbw_hz,
+        )
 
 
 class VisaSpectrumAnalyzer:
@@ -202,16 +276,22 @@ class VisaSpectrumAnalyzer:
         self,
         address: str,
         timeout_ms: int = 5000,
-        sweep_span_ghz: float = 1.0,
+        sweep_span_ghz: float = 0.002,
         frequency_divisor: float = 1.0,
+        sweep_points: int = 201,
+        rbw_hz: float = 1000.0,
+        vbw_hz: float = 1000.0,
     ) -> None:
         self.address = address
         self.timeout_ms = timeout_ms
         self.sweep_span_ghz = sweep_span_ghz
         self.frequency_divisor = frequency_divisor
+        self.sweep_points = sweep_points
+        self.rbw_hz = rbw_hz
+        self.vbw_hz = vbw_hz
         self._rm = None
         self._instrument = None
-        self._last_sweep_range_ghz: tuple[float, float] | None = None
+        self._last_sweep_settings: _SweepSettings | None = None
 
     def connect(self) -> None:
         """创建 pyvisa ResourceManager 并打开指定资源。"""
@@ -233,7 +313,7 @@ class VisaSpectrumAnalyzer:
         if self.address.upper().endswith("::SOCKET"):
             self._instrument.write_termination = "\n"
             self._instrument.read_termination = "\n"
-        self._last_sweep_range_ghz = None
+        self._last_sweep_settings = None
 
     def disconnect(self) -> None:
         """关闭仪器和资源管理器，避免 VISA 句柄泄漏。"""
@@ -243,7 +323,7 @@ class VisaSpectrumAnalyzer:
         if self._rm is not None:
             self._rm.close()
             self._rm = None
-        self._last_sweep_range_ghz = None
+        self._last_sweep_settings = None
 
     def is_connected(self) -> bool:
         """VISA 资源对象存在即认为已连接。"""
@@ -262,7 +342,7 @@ class VisaSpectrumAnalyzer:
         """
         if self._instrument is None:
             raise RuntimeError("VISA instrument is not connected")
-        self._configure_sweep_range(context)
+        self._configure_sweep_settings(context)
         self._instrument.write("CALCulate:MARKer1:MAXimum")
         time.sleep(0.1)
         return float(self._instrument.query("CALCulate:MARKer1:Y?"))
@@ -271,24 +351,38 @@ class VisaSpectrumAnalyzer:
         """按当前校准频率主动同步频谱仪观察中心频率。"""
         if self._instrument is None:
             raise RuntimeError("VISA instrument is not connected")
-        self._configure_sweep_range_for_frequency(frequency_ghz)
+        self._configure_sweep_settings_for_frequency(frequency_ghz)
 
-    def _configure_sweep_range(self, context: MeasurementContext | None) -> None:
-        sweep_range = _sweep_range_ghz(context, self.sweep_span_ghz, self.frequency_divisor)
-        if sweep_range is None or sweep_range == self._last_sweep_range_ghz:
+    def _configure_sweep_settings(self, context: MeasurementContext | None) -> None:
+        settings = _sweep_settings(
+            context,
+            self.sweep_span_ghz,
+            self.frequency_divisor,
+            self.sweep_points,
+            self.rbw_hz,
+            self.vbw_hz,
+        )
+        if settings is None or settings == self._last_sweep_settings:
             return
-        self._write_sweep_range(sweep_range)
+        self._write_sweep_settings(settings)
 
-    def _configure_sweep_range_for_frequency(self, frequency_ghz: float) -> None:
-        sweep_range = _mapped_sweep_range_ghz(frequency_ghz, self.sweep_span_ghz, self.frequency_divisor)
-        if sweep_range == self._last_sweep_range_ghz:
+    def _configure_sweep_settings_for_frequency(self, frequency_ghz: float) -> None:
+        settings = _mapped_sweep_settings(
+            frequency_ghz,
+            self.sweep_span_ghz,
+            self.frequency_divisor,
+            self.sweep_points,
+            self.rbw_hz,
+            self.vbw_hz,
+        )
+        if settings == self._last_sweep_settings:
             return
-        self._write_sweep_range(sweep_range)
+        self._write_sweep_settings(settings)
 
-    def _write_sweep_range(self, sweep_range: tuple[float, float]) -> None:
-        for command in _sweep_range_commands(sweep_range):
+    def _write_sweep_settings(self, settings: _SweepSettings) -> None:
+        for command in _sweep_settings_commands(settings):
             self._instrument.write(command)
-        self._last_sweep_range_ghz = sweep_range
+        self._last_sweep_settings = settings
         time.sleep(0.1)
 
 
@@ -302,17 +396,23 @@ class XianGpibSpectrumAnalyzer:
         self,
         address: str,
         timeout_ms: int = 10000,
-        sweep_span_ghz: float = 1.0,
+        sweep_span_ghz: float = 0.002,
         frequency_divisor: float = 1.0,
+        sweep_points: int = 201,
+        rbw_hz: float = 1000.0,
+        vbw_hz: float = 1000.0,
     ) -> None:
         self.address = address
         self.timeout_ms = timeout_ms
         self.sweep_span_ghz = sweep_span_ghz
         self.frequency_divisor = frequency_divisor
+        self.sweep_points = sweep_points
+        self.rbw_hz = rbw_hz
+        self.vbw_hz = vbw_hz
         self._rm = None
         self._instrument = None
         self._connected = False
-        self._last_sweep_range_ghz: tuple[float, float] | None = None
+        self._last_sweep_settings: _SweepSettings | None = None
 
     def connect(self) -> None:
         try:
@@ -334,7 +434,7 @@ class XianGpibSpectrumAnalyzer:
             self._instrument.timeout = self.timeout_ms
             self._instrument.write_termination = "\n"
             self._instrument.read_termination = "\n"
-            self._last_sweep_range_ghz = None
+            self._last_sweep_settings = None
 
             identity = self.read_identity()
             if "FSQ" not in identity.upper():
@@ -359,7 +459,7 @@ class XianGpibSpectrumAnalyzer:
             self._rm.close()
             self._rm = None
         self._connected = False
-        self._last_sweep_range_ghz = None
+        self._last_sweep_settings = None
 
     def is_connected(self) -> bool:
         return self._connected and self._instrument is not None
@@ -371,7 +471,7 @@ class XianGpibSpectrumAnalyzer:
         """按西安所现有流程执行单次扫频并读取峰值功率。"""
         self._ensure_connected()
         self._write("INIT:CONT OFF")
-        self._configure_sweep_range(context)
+        self._configure_sweep_settings(context)
         self._write("INIT")
         self._query("*OPC?")
         self._write("CALC:MARK:MAX")
@@ -379,24 +479,38 @@ class XianGpibSpectrumAnalyzer:
 
     def configure_sweep_for_frequency(self, frequency_ghz: float) -> None:
         self._ensure_connected()
-        self._configure_sweep_range_for_frequency(frequency_ghz)
+        self._configure_sweep_settings_for_frequency(frequency_ghz)
 
-    def _configure_sweep_range(self, context: MeasurementContext | None) -> None:
-        sweep_range = _sweep_range_ghz(context, self.sweep_span_ghz, self.frequency_divisor)
-        if sweep_range is None or sweep_range == self._last_sweep_range_ghz:
+    def _configure_sweep_settings(self, context: MeasurementContext | None) -> None:
+        settings = _sweep_settings(
+            context,
+            self.sweep_span_ghz,
+            self.frequency_divisor,
+            self.sweep_points,
+            self.rbw_hz,
+            self.vbw_hz,
+        )
+        if settings is None or settings == self._last_sweep_settings:
             return
-        self._write_sweep_range(sweep_range)
+        self._write_sweep_settings(settings)
 
-    def _configure_sweep_range_for_frequency(self, frequency_ghz: float) -> None:
-        sweep_range = _mapped_sweep_range_ghz(frequency_ghz, self.sweep_span_ghz, self.frequency_divisor)
-        if sweep_range == self._last_sweep_range_ghz:
+    def _configure_sweep_settings_for_frequency(self, frequency_ghz: float) -> None:
+        settings = _mapped_sweep_settings(
+            frequency_ghz,
+            self.sweep_span_ghz,
+            self.frequency_divisor,
+            self.sweep_points,
+            self.rbw_hz,
+            self.vbw_hz,
+        )
+        if settings == self._last_sweep_settings:
             return
-        self._write_sweep_range(sweep_range)
+        self._write_sweep_settings(settings)
 
-    def _write_sweep_range(self, sweep_range: tuple[float, float]) -> None:
-        for command in _sweep_range_commands(sweep_range):
+    def _write_sweep_settings(self, settings: _SweepSettings) -> None:
+        for command in _sweep_settings_commands(settings):
             self._write(command)
-        self._last_sweep_range_ghz = sweep_range
+        self._last_sweep_settings = settings
 
     def _write(self, command: str) -> None:
         self._ensure_instrument()

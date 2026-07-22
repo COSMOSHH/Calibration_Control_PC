@@ -52,8 +52,16 @@ class AppDefaults:
     xian_gpib_visa_address: str = "GPIB0::20::INSTR"
     # 真实频谱仪连接超时。
     spectrum_analyzer_timeout_ms: int = 5000
-    # 真实频谱仪读数前自动设置的扫频宽度，中心频率来自 UI0 当前校准频率。
-    spectrum_analyzer_span_ghz: float = 1.0
+    # 真实频谱仪读数前自动设置的扫频宽度，默认 2 MHz。
+    spectrum_analyzer_span_ghz: float = 0.002
+    # 频谱仪预测试设置：201 个点从起始频率扫到终止频率。
+    spectrum_analyzer_scan_points: int = 201
+    # 当前使用仪器默认扫频时间；如以后需要手动设置，可恢复下面的点间隔配置。
+    # spectrum_analyzer_scan_point_interval_ms: float = 1.0
+    # 频谱仪分辨率带宽 RBW（Resolution Bandwidth），默认 1 kHz。
+    spectrum_analyzer_rbw_hz: float = 1000.0
+    # 频谱仪视频带宽 VBW（Video Bandwidth），默认 1 kHz。
+    spectrum_analyzer_vbw_hz: float = 1000.0
     # 频谱仪实际观察频率换算系数：无扩频模块调试时按“当前校准频率 / 10”观察；正式接扩频模块时改为 1.0。
     spectrum_analyzer_frequency_divisor: float = 10.0
     # 信号源默认手动控制，避免无仪器或地址未配置时误下发 VISA/SCPI 命令。 TCPIP::0.0.0.0::INSTR
@@ -150,19 +158,32 @@ def create_spectrum_analyzer(mode: str | None = None):
         )
         if profile == SPECTRUM_ANALYZER_PROFILE_XIAN_GPIB:
             return XianGpibSpectrumAnalyzer(
-                DEFAULTS.xian_gpib_visa_address,
-                DEFAULTS.spectrum_analyzer_timeout_ms,
-                DEFAULTS.spectrum_analyzer_span_ghz,
-                DEFAULTS.spectrum_analyzer_frequency_divisor,
+                address=DEFAULTS.xian_gpib_visa_address,
+                timeout_ms=DEFAULTS.spectrum_analyzer_timeout_ms,
+                sweep_span_ghz=DEFAULTS.spectrum_analyzer_span_ghz,
+                frequency_divisor=DEFAULTS.spectrum_analyzer_frequency_divisor,
+                sweep_points=DEFAULTS.spectrum_analyzer_scan_points,
+                rbw_hz=DEFAULTS.spectrum_analyzer_rbw_hz,
+                vbw_hz=DEFAULTS.spectrum_analyzer_vbw_hz,
             )
         return VisaSpectrumAnalyzer(
-            DEFAULTS.visa_address,
-            DEFAULTS.spectrum_analyzer_timeout_ms,
-            DEFAULTS.spectrum_analyzer_span_ghz,
-            DEFAULTS.spectrum_analyzer_frequency_divisor,
+            address=DEFAULTS.visa_address,
+            timeout_ms=DEFAULTS.spectrum_analyzer_timeout_ms,
+            sweep_span_ghz=DEFAULTS.spectrum_analyzer_span_ghz,
+            frequency_divisor=DEFAULTS.spectrum_analyzer_frequency_divisor,
+            sweep_points=DEFAULTS.spectrum_analyzer_scan_points,
+            rbw_hz=DEFAULTS.spectrum_analyzer_rbw_hz,
+            vbw_hz=DEFAULTS.spectrum_analyzer_vbw_hz,
         )
 
-    return SimulatedSpectrumAnalyzer(DEFAULTS.visa_address)
+    return SimulatedSpectrumAnalyzer(
+        address=DEFAULTS.visa_address,
+        sweep_span_ghz=DEFAULTS.spectrum_analyzer_span_ghz,
+        frequency_divisor=DEFAULTS.spectrum_analyzer_frequency_divisor,
+        sweep_points=DEFAULTS.spectrum_analyzer_scan_points,
+        rbw_hz=DEFAULTS.spectrum_analyzer_rbw_hz,
+        vbw_hz=DEFAULTS.spectrum_analyzer_vbw_hz,
+    )
 
 
 def create_turntable_controller(serial_port: str | None = None, mode: str | None = None):

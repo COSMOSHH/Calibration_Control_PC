@@ -82,8 +82,11 @@ def test_visa_analyzer_sets_sweep_range_before_marker_read(monkeypatch) -> None:
 
     assert power_dbm == -12.5
     assert instrument.writes == [
-        "SENSe:FREQuency:CENTer 212000000000",
-        "SENSe:FREQuency:SPAN 250000000",
+        "SENSe:FREQuency:STARt 211875000000",
+        "SENSe:FREQuency:STOP 212125000000",
+        "SENSe:SWEep:POINts 201",
+        "SENSe:BANDwidth:RESolution 1000",
+        "SENSe:BANDwidth:VIDeo 1000",
         "CALCulate:MARKer1:MAXimum",
     ]
     assert instrument.queries == ["CALCulate:MARKer1:Y?"]
@@ -98,8 +101,35 @@ def test_visa_analyzer_maps_calibration_frequency_with_divisor(monkeypatch) -> N
     analyzer.read_peak_power_dbm(make_context(215.0))
 
     assert instrument.writes == [
-        "SENSe:FREQuency:CENTer 21500000000",
-        "SENSe:FREQuency:SPAN 100000000",
+        "SENSe:FREQuency:STARt 21450000000",
+        "SENSe:FREQuency:STOP 21550000000",
+        "SENSe:SWEep:POINts 201",
+        "SENSe:BANDwidth:RESolution 1000",
+        "SENSe:BANDwidth:VIDeo 1000",
+        "CALCulate:MARKer1:MAXimum",
+    ]
+
+
+def test_visa_analyzer_uses_custom_sweep_point_settings(monkeypatch) -> None:
+    monkeypatch.setattr(spectrum_analyzer.time, "sleep", lambda _: None)
+    instrument = FakeVisaInstrument()
+    analyzer = VisaSpectrumAnalyzer(
+        "SIM",
+        sweep_span_ghz=0.002,
+        sweep_points=401,
+        rbw_hz=3000.0,
+        vbw_hz=5000.0,
+    )
+    analyzer._instrument = instrument
+
+    analyzer.read_peak_power_dbm(make_context())
+
+    assert instrument.writes == [
+        "SENSe:FREQuency:STARt 211999000000",
+        "SENSe:FREQuency:STOP 212001000000",
+        "SENSe:SWEep:POINts 401",
+        "SENSe:BANDwidth:RESolution 3000",
+        "SENSe:BANDwidth:VIDeo 5000",
         "CALCulate:MARKer1:MAXimum",
     ]
 
@@ -114,8 +144,11 @@ def test_visa_analyzer_preconfigured_sweep_is_reused_for_marker_read(monkeypatch
     analyzer.read_peak_power_dbm(make_context(215.0))
 
     assert instrument.writes == [
-        "SENSe:FREQuency:CENTer 21500000000",
-        "SENSe:FREQuency:SPAN 100000000",
+        "SENSe:FREQuency:STARt 21450000000",
+        "SENSe:FREQuency:STOP 21550000000",
+        "SENSe:SWEep:POINts 201",
+        "SENSe:BANDwidth:RESolution 1000",
+        "SENSe:BANDwidth:VIDeo 1000",
         "CALCulate:MARKer1:MAXimum",
     ]
 
@@ -194,8 +227,11 @@ def test_xian_gpib_analyzer_sets_sweep_range_before_single_sweep() -> None:
     assert power_dbm == -12.5
     assert instrument.writes == [
         "INIT:CONT OFF",
-        "SENSe:FREQuency:CENTer 215000000000",
-        "SENSe:FREQuency:SPAN 1500000000",
+        "SENSe:FREQuency:STARt 214250000000",
+        "SENSe:FREQuency:STOP 215750000000",
+        "SENSe:SWEep:POINts 201",
+        "SENSe:BANDwidth:RESolution 1000",
+        "SENSe:BANDwidth:VIDeo 1000",
         "INIT",
         "CALC:MARK:MAX",
     ]
