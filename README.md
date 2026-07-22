@@ -59,8 +59,8 @@ python run_app.py --config --serial-port COM3
 | 相位范围 | 0 deg 到 354.375 deg |
 | 相位步长 | 5.625 deg |
 | 每点稳定等待 | 500 ms |
-| 每点采样次数 | 3 |
-| 功率判定 | 平均值 |
+| 频谱仪内置平均次数 | 3 |
+| 功率判定 | 频谱仪内置平均后的单次读数 |
 | 保存单位 | uW |
 | 默认串口 | COM1 |
 | 串口波特率 | 9600 |
@@ -113,7 +113,7 @@ Calibration_Control_PC/
 
 | 模块 | 主要职责 | 常见修改场景 |
 |------|----------|--------------|
-| `config.py` | 管理默认频点、相位范围、串口、VISA、模拟/真实模式、模板路径 | 改默认串口、切换真实 STM32/频谱仪、改采样次数或等待时间 |
+| `config.py` | 管理默认频点、相位范围、串口、VISA、模拟/真实模式、模板路径 | 改默认串口、切换真实 STM32/频谱仪、改频谱仪平均次数或等待时间 |
 | `models.py` | 定义扫描和发送用的数据结构 | 新增 payload 字段、调整扫描参数模型 |
 | `protocol.py` | 生成 STM32 串口协议帧 | 改帧头帧尾、命令字、CRC、JSON 格式 |
 | `device_controller.py` | 统一设备控制接口 | 增加新的下位机命令，如查询状态、关闭单个 Feed |
@@ -268,7 +268,7 @@ output/
 
 | 需求 | 优先查看 |
 |------|----------|
-| 改默认频点、步长、串口、采样次数 | `src/thz_calibration/config.py` |
+| 改默认频点、步长、串口、频谱仪平均次数 | `src/thz_calibration/config.py` |
 | 改 STM32 payload 字段 | `src/thz_calibration/models.py`、`src/thz_calibration/protocol.py` |
 | 改串口发送/ACK 读取 | `src/thz_calibration/transport/serial_transport.py` |
 | 改校准流程、Feed 开关逻辑、终端日志 | `src/thz_calibration/calibration/engine.py`、`src/thz_calibration/ui/calibration_test_window.py` |

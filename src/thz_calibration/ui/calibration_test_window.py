@@ -431,6 +431,11 @@ class CalibrationTestWindow(QMainWindow):
         self._set_toggle_pair(self.if_off_btn, self.if_on_btn)
         self._refresh_serial_ports()
         self._refresh_turntable_ports()
+        if self.analyzer.is_connected():
+            try:
+                self._sync_analyzer_frequency(DEFAULTS.frequency_ghz)
+            except Exception as exc:
+                QMessageBox.warning(self, "频谱仪重设失败", self._format_analyzer_setup_message(exc))
 
     def _confirm_global(self) -> None:
         """确认全局设置并锁定输入。
@@ -739,6 +744,8 @@ class CalibrationTestWindow(QMainWindow):
             self._message(text)
         except Exception as exc:
             QMessageBox.warning(self, "测试失败", str(exc))
+        finally:
+            self._resume_analyzer_live_display(suppress_errors=True)
 
     def _ensure_scan_devices_ready(self) -> bool:
         if not self.device.is_connected():
@@ -760,10 +767,19 @@ class CalibrationTestWindow(QMainWindow):
             frequency_ghz = self.freq_spin.value()
         if not self.analyzer.is_connected():
             self.analyzer.connect()
-        self.analyzer.configure_sweep_for_frequency(float(frequency_ghz))
+        self.analyzer.configure_sweep_for_frequency(float(frequency_ghz), force=True)
+        self._resume_analyzer_live_display()
         text = self._analyzer_frequency_text(float(frequency_ghz))
         print(text, flush=True)
         return text
+
+    def _resume_analyzer_live_display(self, suppress_errors: bool = False) -> None:
+        try:
+            self.analyzer.resume_live_display()
+        except Exception as exc:
+            if not suppress_errors:
+                raise
+            print(f"频谱仪恢复连续显示失败: {exc}", flush=True)
 
     def _analyzer_frequency_text(self, frequency_ghz: float) -> str:
         divisor = getattr(self.analyzer, "frequency_divisor", 1.0)

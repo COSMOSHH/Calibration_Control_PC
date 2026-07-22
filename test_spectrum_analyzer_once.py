@@ -21,6 +21,7 @@ from debug_spectrum_analyzer import (  # noqa: E402
 )
 from thz_calibration.config import DEFAULTS  # noqa: E402
 from thz_calibration.instruments.spectrum_analyzer import (  # noqa: E402
+    _average_count_commands,
     _mapped_sweep_settings,
     _sweep_settings_commands,
 )
@@ -52,6 +53,7 @@ def _print_default_settings(settings) -> None:
     print("sweep time     : analyzer default (read back only)")
     print(f"RBW            : {settings.rbw_hz} Hz")
     print(f"VBW            : {settings.vbw_hz} Hz")
+    print(f"average count  : {DEFAULTS.sample_count}")
     print(f"timeout ms     : {DEFAULTS.spectrum_analyzer_timeout_ms}")
 
 
@@ -101,6 +103,8 @@ def run_once() -> None:
         raise ValueError("spectrum_analyzer_rbw_hz must be positive")
     if DEFAULTS.spectrum_analyzer_vbw_hz <= 0:
         raise ValueError("spectrum_analyzer_vbw_hz must be positive")
+    if DEFAULTS.sample_count <= 0:
+        raise ValueError("sample_count must be positive")
 
     try:
         import pyvisa
@@ -135,6 +139,8 @@ def run_once() -> None:
         drain_errors(query, "连接后错误队列")
 
         _write_sweep_settings(write, query, settings)
+        for command in _average_count_commands(DEFAULTS.sample_count):
+            _require_ok(write(command), command)
         drain_errors(query, "参数设置后错误队列")
         _run_single_sweep(write, query)
         drain_errors(query, "单次测试后错误队列")

@@ -7,7 +7,7 @@ from typing import Callable
 from ..controllers import DeviceController
 from ..instruments import SpectrumAnalyzer
 from ..models import CalibrationResult, FeedState, MeasurementContext, ScanConfig, ScanPoint
-from ..utils import average, dbm_to_uw
+from ..utils import dbm_to_uw
 
 
 PointCallback = Callable[[ScanPoint], None]
@@ -40,6 +40,7 @@ class CalibrationEngine:
         当前 target_feed_id 会在循环里不断替换 phase_deg。
         """
         config.validate()
+        self.analyzer.configure_average_count(config.sample_count)
         phase_points = config.phase_points()
         points: list[ScanPoint] = []
 
@@ -70,8 +71,8 @@ class CalibrationEngine:
                 phase_deg=phase,
                 feed_states=current_states,
             )
-            samples = self._sample_power_dbm(context, config.sample_count)
-            avg_dbm = average(samples)
+            avg_dbm = self.analyzer.read_peak_power_dbm(context)
+            samples = [avg_dbm]
             # ScanPoint 里同时保存 dBm 和 uW；Excel 目前写 uW。
             point = ScanPoint(
                 index=index,
@@ -89,15 +90,6 @@ class CalibrationEngine:
                 on_point(point)
 
         return CalibrationResult(config=config, points=points)
-
-    def _sample_power_dbm(self, context: MeasurementContext, sample_count: int) -> list[float]:
-        """按 sample_count 连续读取频谱仪，点间保留短暂间隔。"""
-        samples: list[float] = []
-        for sample_index in range(sample_count):
-            samples.append(self.analyzer.read_peak_power_dbm(context))
-            if sample_index < sample_count - 1:
-                time.sleep(0.05)
-        return samples
 
     def _prepare_states(
         self,

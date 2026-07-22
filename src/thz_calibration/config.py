@@ -84,7 +84,7 @@ class AppDefaults:
     default_amplitude: float = 0.12
     # 每次相位下发后等待硬件稳定的默认时间。
     settle_time_ms: int = 500
-    # UI0 每个相位点读取频谱仪的次数，最后取平均值。
+    # UI0 配置给频谱仪内置平均功能的平均次数；每个相位点只读取一次硬件平均后的 marker 功率。
     sample_count: int = 3
     # 串口默认值用于启动后还没有枚举到串口时兜底。
     serial_port: str = "COM1"

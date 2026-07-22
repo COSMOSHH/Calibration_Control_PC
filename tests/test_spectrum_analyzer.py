@@ -4,7 +4,11 @@ from types import SimpleNamespace
 import pytest
 
 from thz_calibration.instruments import spectrum_analyzer
-from thz_calibration.instruments.spectrum_analyzer import VisaSpectrumAnalyzer, XianGpibSpectrumAnalyzer
+from thz_calibration.instruments.spectrum_analyzer import (
+    SimulatedSpectrumAnalyzer,
+    VisaSpectrumAnalyzer,
+    XianGpibSpectrumAnalyzer,
+)
 from thz_calibration.models import MeasurementContext
 
 
@@ -72,6 +76,16 @@ def make_context(frequency_ghz: float = 212.0) -> MeasurementContext:
     )
 
 
+def test_simulated_analyzer_records_hardware_average_count() -> None:
+    analyzer = SimulatedSpectrumAnalyzer()
+
+    analyzer.configure_average_count(4)
+
+    assert analyzer.average_count == 4
+    with pytest.raises(ValueError):
+        analyzer.configure_average_count(0)
+
+
 def test_visa_analyzer_sets_sweep_range_before_marker_read(monkeypatch) -> None:
     monkeypatch.setattr(spectrum_analyzer.time, "sleep", lambda _: None)
     instrument = FakeVisaInstrument()
@@ -87,6 +101,8 @@ def test_visa_analyzer_sets_sweep_range_before_marker_read(monkeypatch) -> None:
         "SENSe:SWEep:POINts 201",
         "SENSe:BANDwidth:RESolution 1000",
         "SENSe:BANDwidth:VIDeo 1000",
+        "SENSe:AVERage:CLEar",
+        "CALCulate:MARKer1:STATe ON",
         "CALCulate:MARKer1:MAXimum",
     ]
     assert instrument.queries == ["CALCulate:MARKer1:Y?"]
@@ -106,6 +122,8 @@ def test_visa_analyzer_maps_calibration_frequency_with_divisor(monkeypatch) -> N
         "SENSe:SWEep:POINts 201",
         "SENSe:BANDwidth:RESolution 1000",
         "SENSe:BANDwidth:VIDeo 1000",
+        "SENSe:AVERage:CLEar",
+        "CALCulate:MARKer1:STATe ON",
         "CALCulate:MARKer1:MAXimum",
     ]
 
@@ -130,7 +148,41 @@ def test_visa_analyzer_uses_custom_sweep_point_settings(monkeypatch) -> None:
         "SENSe:SWEep:POINts 401",
         "SENSe:BANDwidth:RESolution 3000",
         "SENSe:BANDwidth:VIDeo 5000",
+        "SENSe:AVERage:CLEar",
+        "CALCulate:MARKer1:STATe ON",
         "CALCulate:MARKer1:MAXimum",
+    ]
+
+
+def test_visa_analyzer_configures_hardware_average_count() -> None:
+    instrument = FakeVisaInstrument()
+    analyzer = VisaSpectrumAnalyzer("SIM")
+    analyzer._instrument = instrument
+
+    analyzer.configure_average_count(3)
+
+    assert analyzer.average_count == 3
+    assert instrument.writes == [
+        "SENSe:AVERage:COUNt 3",
+        "SENSe:AVERage:STATe ON",
+    ]
+
+
+def test_visa_analyzer_resumes_live_display() -> None:
+    instrument = FakeVisaInstrument()
+    analyzer = VisaSpectrumAnalyzer("SIM")
+    analyzer._instrument = instrument
+
+    analyzer.resume_live_display()
+
+    assert instrument.writes == [
+        "SYSTem:DISPlay:UPDate ON",
+        "DISPlay:ENABle ON",
+        "CALCulate:MARKer1:STATe OFF",
+        "SENSe:AVERage:STATe OFF",
+        "SENSe:AVERage:CLEar",
+        "INITiate:CONTinuous ON",
+        "INITiate:IMMediate",
     ]
 
 
@@ -149,8 +201,29 @@ def test_visa_analyzer_preconfigured_sweep_is_reused_for_marker_read(monkeypatch
         "SENSe:SWEep:POINts 201",
         "SENSe:BANDwidth:RESolution 1000",
         "SENSe:BANDwidth:VIDeo 1000",
+        "SENSe:AVERage:CLEar",
+        "CALCulate:MARKer1:STATe ON",
         "CALCulate:MARKer1:MAXimum",
     ]
+
+
+def test_visa_analyzer_can_force_reconfigure_same_sweep(monkeypatch) -> None:
+    monkeypatch.setattr(spectrum_analyzer.time, "sleep", lambda _: None)
+    instrument = FakeVisaInstrument()
+    analyzer = VisaSpectrumAnalyzer("SIM", sweep_span_ghz=1.0, frequency_divisor=10.0)
+    analyzer._instrument = instrument
+
+    analyzer.configure_sweep_for_frequency(215.0)
+    analyzer.configure_sweep_for_frequency(215.0, force=True)
+
+    expected = [
+        "SENSe:FREQuency:STARt 21450000000",
+        "SENSe:FREQuency:STOP 21550000000",
+        "SENSe:SWEep:POINts 201",
+        "SENSe:BANDwidth:RESolution 1000",
+        "SENSe:BANDwidth:VIDeo 1000",
+    ]
+    assert instrument.writes == expected + expected
 
 
 def test_visa_analyzer_connect_reports_available_resources(monkeypatch) -> None:
@@ -232,7 +305,42 @@ def test_xian_gpib_analyzer_sets_sweep_range_before_single_sweep() -> None:
         "SENSe:SWEep:POINts 201",
         "SENSe:BANDwidth:RESolution 1000",
         "SENSe:BANDwidth:VIDeo 1000",
+        "SENSe:AVERage:CLEar",
+        "CALC:MARK ON",
         "INIT",
         "CALC:MARK:MAX",
     ]
     assert instrument.queries == ["*OPC?", "CALC:MARK:Y?"]
+
+
+def test_xian_gpib_analyzer_configures_hardware_average_count() -> None:
+    instrument = FakeVisaInstrument()
+    analyzer = XianGpibSpectrumAnalyzer("SIM")
+    analyzer._instrument = instrument
+    analyzer._connected = True
+
+    analyzer.configure_average_count(5)
+
+    assert analyzer.average_count == 5
+    assert instrument.writes == [
+        "SENSe:AVERage:COUNt 5",
+        "SENSe:AVERage:STATe ON",
+    ]
+
+
+def test_xian_gpib_analyzer_resumes_live_display() -> None:
+    instrument = FakeVisaInstrument()
+    analyzer = XianGpibSpectrumAnalyzer("SIM")
+    analyzer._instrument = instrument
+    analyzer._connected = True
+
+    analyzer.resume_live_display()
+
+    assert instrument.writes == [
+        "SYST:DISP:UPD ON",
+        "CALC:MARK OFF",
+        "SENSe:AVERage:STATe OFF",
+        "SENSe:AVERage:CLEar",
+        "INIT:CONT ON",
+        "INIT",
+    ]

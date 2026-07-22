@@ -32,7 +32,13 @@ class SpectrumAnalyzer(Protocol):
     def read_peak_power_dbm(self, context: MeasurementContext | None = None) -> float:
         ...
 
-    def configure_sweep_for_frequency(self, frequency_ghz: float) -> None:
+    def configure_sweep_for_frequency(self, frequency_ghz: float, force: bool = False) -> None:
+        ...
+
+    def configure_average_count(self, count: int) -> None:
+        ...
+
+    def resume_live_display(self) -> None:
         ...
 
 
@@ -124,6 +130,20 @@ def _sweep_settings_commands(settings: _SweepSettings) -> tuple[str, ...]:
     )
 
 
+def _normalize_average_count(count: int) -> int:
+    if count <= 0:
+        raise ValueError("spectrum analyzer average count must be positive")
+    return int(count)
+
+
+def _average_count_commands(count: int) -> tuple[str, ...]:
+    normalized = _normalize_average_count(count)
+    return (
+        f"SENSe:AVERage:COUNt {normalized}",
+        "SENSe:AVERage:STATe ON",
+    )
+
+
 def _safe_list_visa_resources(resource_manager) -> tuple[str, ...]:
     try:
         return tuple(str(resource) for resource in resource_manager.list_resources())
@@ -205,6 +225,7 @@ class SimulatedSpectrumAnalyzer:
         self.sweep_points = sweep_points
         self.rbw_hz = rbw_hz
         self.vbw_hz = vbw_hz
+        self.average_count = 1
         self._connected = False
         # 固定随机种子保证调试时每次运行的模拟曲线大致一致。
         self._rng = random.Random(504)
@@ -253,7 +274,7 @@ class SimulatedSpectrumAnalyzer:
         noise_uw = self._rng.uniform(-0.35, 0.35)
         return uw_to_dbm(max(power_uw + noise_uw, 0.001))
 
-    def configure_sweep_for_frequency(self, frequency_ghz: float) -> None:
+    def configure_sweep_for_frequency(self, frequency_ghz: float, force: bool = False) -> None:
         """模拟频谱仪不需要下发扫频设置，但保留接口供 UI 统一调用。"""
         _mapped_sweep_settings(
             frequency_ghz,
@@ -263,6 +284,12 @@ class SimulatedSpectrumAnalyzer:
             self.rbw_hz,
             self.vbw_hz,
         )
+
+    def configure_average_count(self, count: int) -> None:
+        self.average_count = _normalize_average_count(count)
+
+    def resume_live_display(self) -> None:
+        return None
 
 
 class VisaSpectrumAnalyzer:
@@ -289,6 +316,7 @@ class VisaSpectrumAnalyzer:
         self.sweep_points = sweep_points
         self.rbw_hz = rbw_hz
         self.vbw_hz = vbw_hz
+        self.average_count = 1
         self._rm = None
         self._instrument = None
         self._last_sweep_settings: _SweepSettings | None = None
@@ -343,15 +371,35 @@ class VisaSpectrumAnalyzer:
         if self._instrument is None:
             raise RuntimeError("VISA instrument is not connected")
         self._configure_sweep_settings(context)
+        self._instrument.write("SENSe:AVERage:CLEar")
+        self._instrument.write("CALCulate:MARKer1:STATe ON")
         self._instrument.write("CALCulate:MARKer1:MAXimum")
         time.sleep(0.1)
         return float(self._instrument.query("CALCulate:MARKer1:Y?"))
 
-    def configure_sweep_for_frequency(self, frequency_ghz: float) -> None:
+    def configure_sweep_for_frequency(self, frequency_ghz: float, force: bool = False) -> None:
         """按当前校准频率主动同步频谱仪观察中心频率。"""
         if self._instrument is None:
             raise RuntimeError("VISA instrument is not connected")
-        self._configure_sweep_settings_for_frequency(frequency_ghz)
+        self._configure_sweep_settings_for_frequency(frequency_ghz, force=force)
+
+    def configure_average_count(self, count: int) -> None:
+        if self._instrument is None:
+            raise RuntimeError("VISA instrument is not connected")
+        for command in _average_count_commands(count):
+            self._instrument.write(command)
+        self.average_count = _normalize_average_count(count)
+
+    def resume_live_display(self) -> None:
+        if self._instrument is None:
+            raise RuntimeError("VISA instrument is not connected")
+        self._instrument.write("SYSTem:DISPlay:UPDate ON")
+        self._instrument.write("DISPlay:ENABle ON")
+        self._instrument.write("CALCulate:MARKer1:STATe OFF")
+        self._instrument.write("SENSe:AVERage:STATe OFF")
+        self._instrument.write("SENSe:AVERage:CLEar")
+        self._instrument.write("INITiate:CONTinuous ON")
+        self._instrument.write("INITiate:IMMediate")
 
     def _configure_sweep_settings(self, context: MeasurementContext | None) -> None:
         settings = _sweep_settings(
@@ -366,7 +414,7 @@ class VisaSpectrumAnalyzer:
             return
         self._write_sweep_settings(settings)
 
-    def _configure_sweep_settings_for_frequency(self, frequency_ghz: float) -> None:
+    def _configure_sweep_settings_for_frequency(self, frequency_ghz: float, force: bool = False) -> None:
         settings = _mapped_sweep_settings(
             frequency_ghz,
             self.sweep_span_ghz,
@@ -375,7 +423,7 @@ class VisaSpectrumAnalyzer:
             self.rbw_hz,
             self.vbw_hz,
         )
-        if settings == self._last_sweep_settings:
+        if not force and settings == self._last_sweep_settings:
             return
         self._write_sweep_settings(settings)
 
@@ -409,6 +457,7 @@ class XianGpibSpectrumAnalyzer:
         self.sweep_points = sweep_points
         self.rbw_hz = rbw_hz
         self.vbw_hz = vbw_hz
+        self.average_count = 1
         self._rm = None
         self._instrument = None
         self._connected = False
@@ -472,14 +521,31 @@ class XianGpibSpectrumAnalyzer:
         self._ensure_connected()
         self._write("INIT:CONT OFF")
         self._configure_sweep_settings(context)
+        self._write("SENSe:AVERage:CLEar")
+        self._write("CALC:MARK ON")
         self._write("INIT")
         self._query("*OPC?")
         self._write("CALC:MARK:MAX")
         return float(self._query("CALC:MARK:Y?"))
 
-    def configure_sweep_for_frequency(self, frequency_ghz: float) -> None:
+    def configure_sweep_for_frequency(self, frequency_ghz: float, force: bool = False) -> None:
         self._ensure_connected()
-        self._configure_sweep_settings_for_frequency(frequency_ghz)
+        self._configure_sweep_settings_for_frequency(frequency_ghz, force=force)
+
+    def configure_average_count(self, count: int) -> None:
+        self._ensure_connected()
+        for command in _average_count_commands(count):
+            self._write(command)
+        self.average_count = _normalize_average_count(count)
+
+    def resume_live_display(self) -> None:
+        self._ensure_connected()
+        self._write("SYST:DISP:UPD ON")
+        self._write("CALC:MARK OFF")
+        self._write("SENSe:AVERage:STATe OFF")
+        self._write("SENSe:AVERage:CLEar")
+        self._write("INIT:CONT ON")
+        self._write("INIT")
 
     def _configure_sweep_settings(self, context: MeasurementContext | None) -> None:
         settings = _sweep_settings(
@@ -494,7 +560,7 @@ class XianGpibSpectrumAnalyzer:
             return
         self._write_sweep_settings(settings)
 
-    def _configure_sweep_settings_for_frequency(self, frequency_ghz: float) -> None:
+    def _configure_sweep_settings_for_frequency(self, frequency_ghz: float, force: bool = False) -> None:
         settings = _mapped_sweep_settings(
             frequency_ghz,
             self.sweep_span_ghz,
@@ -503,7 +569,7 @@ class XianGpibSpectrumAnalyzer:
             self.rbw_hz,
             self.vbw_hz,
         )
-        if settings == self._last_sweep_settings:
+        if not force and settings == self._last_sweep_settings:
             return
         self._write_sweep_settings(settings)
 
