@@ -34,7 +34,11 @@ try {
     $portableDir = Join-Path $projectRoot "dist\THz_Calibration_Portable"
     Copy-Item -LiteralPath (Join-Path $projectRoot "config.ini") -Destination $portableDir -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot "packaging\README_zh-CN.txt") -Destination $portableDir -Force
-    Copy-Item -LiteralPath (Join-Path $projectRoot "packaging\THz_Calibration_Portable_使用说明.md") -Destination $portableDir -Force
+    # Keep the script ASCII-compatible for Windows PowerShell 5.1, which may
+    # otherwise decode a UTF-8 script without BOM using the active code page.
+    $manualSuffix = -join @(0x4F7F, 0x7528, 0x8BF4, 0x660E | ForEach-Object { [char]$_ })
+    $manualFileName = "THz_Calibration_Portable_${manualSuffix}.md"
+    Copy-Item -LiteralPath (Join-Path $projectRoot "packaging\$manualFileName") -Destination $portableDir -Force
     New-Item -ItemType Directory -Path (Join-Path $portableDir "output") -Force | Out-Null
 
     Write-Host "Portable bundle created: $portableDir"
