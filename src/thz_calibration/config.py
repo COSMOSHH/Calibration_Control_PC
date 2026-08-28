@@ -1,15 +1,24 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import configparser
+import os
+import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
-# 项目根路径统一从当前文件向上推导，避免在不同启动目录下找不到 docs/output。
-ROOT_DIR = Path(__file__).resolve().parents[2]
-DOCS_DIR = ROOT_DIR / "docs"
+# 源码运行时以仓库根目录为应用目录；冻结后以 exe 所在目录为应用目录。
+# PyInstaller 会把只读资源放在 sys._MEIPASS，而 config.ini/output 必须留在 exe 外部。
+SOURCE_ROOT_DIR = Path(__file__).resolve().parents[2]
+IS_FROZEN = bool(getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"))
+APP_DIR = Path(sys.executable).resolve().parent if IS_FROZEN else SOURCE_ROOT_DIR
+RESOURCE_DIR = Path(sys._MEIPASS).resolve() if IS_FROZEN else SOURCE_ROOT_DIR
+ROOT_DIR = APP_DIR
+DOCS_DIR = RESOURCE_DIR / "docs"
 TEMPLATE_DIR = DOCS_DIR / "馈源间相位校准数据保存格式"
-OUTPUT_DIR = ROOT_DIR / "output"
 FREQUENCY_PLAN_PATH = DOCS_DIR / "说明文档" / "中频和本振频率核算表.xlsx"
+CONFIG_PATH = Path(os.environ.get("THZ_CALIBRATION_CONFIG", APP_DIR / "config.ini")).resolve()
+CONFIG_WARNINGS: list[str] = []
 
 # 设备模式选项 - "simulated" 使用模拟设备，"serial" 使用实际的STM32串口通信。
 DEVICE_MODE_SIMULATED = "simulated"
@@ -46,6 +55,8 @@ class AppDefaults:
     spectrum_analyzer_mode: str = SPECTRUM_MODE_SIMULATED
     # 真实频谱仪选择档位：research 使用研究院现有 TCPIP/VISA 方式，xian_gpib 使用西安所 GPIB 方式。
     spectrum_analyzer_profile: str = SPECTRUM_ANALYZER_PROFILE_RESEARCH
+    # auto 使用系统默认 VISA；ivi 强制厂商 VISA Runtime；py 强制随软件打包的 pyvisa-py。
+    visa_backend: str = "auto"
     # 研究院现有频谱仪的 pyvisa 资源地址，实机联调连接失败时优先检查这里。
     visa_address: str = "TCPIP0::10.18.18.4::5025::SOCKET"
     # 西安研究所已验证的 FSQ40 GPIB 地址。
@@ -100,7 +111,215 @@ class AppDefaults:
     turntable_settle_time_s: float = 0.12
 
 
-DEFAULTS = AppDefaults()
+def _read_external_config(path: Path) -> configparser.ConfigParser:
+    parser = configparser.ConfigParser(interpolation=None)
+    if not path.exists():
+        return parser
+    try:
+        parser.read_string(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, configparser.Error) as exc:
+        CONFIG_WARNINGS.append(f"配置文件读取失败，将使用内置默认值：{path}\n{exc}")
+    return parser
+
+
+def _config_value(
+    parser: configparser.ConfigParser,
+    section: str,
+    option: str,
+    fallback,
+    converter,
+):
+    if not parser.has_option(section, option):
+        return fallback
+    raw = parser.get(section, option)
+    try:
+        return converter(raw.strip())
+    except (TypeError, ValueError) as exc:
+        CONFIG_WARNINGS.append(
+            f"config.ini 参数 [{section}] {option}={raw!r} 无效，已使用默认值 {fallback!r}：{exc}"
+        )
+        return fallback
+
+
+def _string_value(parser: configparser.ConfigParser, section: str, option: str, fallback: str) -> str:
+    return _config_value(parser, section, option, fallback, str)
+
+
+def _choice_value(
+    parser: configparser.ConfigParser,
+    section: str,
+    option: str,
+    fallback: str,
+    allowed: tuple[str, ...],
+) -> str:
+    def convert(raw: str) -> str:
+        value = raw.lower()
+        if value not in allowed:
+            raise ValueError(f"可选值：{', '.join(allowed)}")
+        return value
+
+    return _config_value(parser, section, option, fallback, convert)
+
+
+def load_app_defaults(
+    config_path: Path = CONFIG_PATH,
+    parser: configparser.ConfigParser | None = None,
+) -> AppDefaults:
+    """Load editable runtime settings while retaining safe built-in fallbacks."""
+    parser = parser if parser is not None else _read_external_config(Path(config_path))
+    defaults = AppDefaults()
+    return replace(
+        defaults,
+        device_mode=_choice_value(
+            parser,
+            "device",
+            "mode",
+            defaults.device_mode,
+            (DEVICE_MODE_SIMULATED, DEVICE_MODE_SERIAL),
+        ),
+        serial_port=_string_value(parser, "device", "serial_port", defaults.serial_port),
+        serial_baudrate=_config_value(
+            parser, "device", "serial_baudrate", defaults.serial_baudrate, int
+        ),
+        spectrum_analyzer_mode=_choice_value(
+            parser,
+            "spectrum_analyzer",
+            "mode",
+            defaults.spectrum_analyzer_mode,
+            (SPECTRUM_MODE_SIMULATED, SPECTRUM_MODE_VISA),
+        ),
+        spectrum_analyzer_profile=_choice_value(
+            parser,
+            "spectrum_analyzer",
+            "profile",
+            defaults.spectrum_analyzer_profile,
+            (SPECTRUM_ANALYZER_PROFILE_RESEARCH, SPECTRUM_ANALYZER_PROFILE_XIAN_GPIB),
+        ),
+        visa_backend=_choice_value(
+            parser, "spectrum_analyzer", "visa_backend", defaults.visa_backend, ("auto", "ivi", "py")
+        ),
+        visa_address=_string_value(
+            parser, "spectrum_analyzer", "visa_address", defaults.visa_address
+        ),
+        xian_gpib_visa_address=_string_value(
+            parser, "spectrum_analyzer", "xian_gpib_address", defaults.xian_gpib_visa_address
+        ),
+        spectrum_analyzer_timeout_ms=_config_value(
+            parser,
+            "spectrum_analyzer",
+            "timeout_ms",
+            defaults.spectrum_analyzer_timeout_ms,
+            int,
+        ),
+        spectrum_analyzer_span_ghz=_config_value(
+            parser,
+            "spectrum_analyzer",
+            "span_ghz",
+            defaults.spectrum_analyzer_span_ghz,
+            float,
+        ),
+        spectrum_analyzer_scan_points=_config_value(
+            parser,
+            "spectrum_analyzer",
+            "scan_points",
+            defaults.spectrum_analyzer_scan_points,
+            int,
+        ),
+        spectrum_analyzer_rbw_hz=_config_value(
+            parser, "spectrum_analyzer", "rbw_hz", defaults.spectrum_analyzer_rbw_hz, float
+        ),
+        spectrum_analyzer_vbw_hz=_config_value(
+            parser, "spectrum_analyzer", "vbw_hz", defaults.spectrum_analyzer_vbw_hz, float
+        ),
+        spectrum_analyzer_frequency_divisor=_config_value(
+            parser,
+            "spectrum_analyzer",
+            "frequency_divisor",
+            defaults.spectrum_analyzer_frequency_divisor,
+            float,
+        ),
+        signal_source_control_mode=_choice_value(
+            parser,
+            "signal_source",
+            "mode",
+            defaults.signal_source_control_mode,
+            (SIGNAL_SOURCE_CONTROL_MANUAL, SIGNAL_SOURCE_CONTROL_AUTO),
+        ),
+        lo_signal_source_visa_address=_string_value(
+            parser, "signal_source", "lo_visa_address", defaults.lo_signal_source_visa_address
+        ),
+        if_signal_source_visa_address=_string_value(
+            parser, "signal_source", "if_visa_address", defaults.if_signal_source_visa_address
+        ),
+        signal_source_timeout_ms=_config_value(
+            parser, "signal_source", "timeout_ms", defaults.signal_source_timeout_ms, int
+        ),
+        frequency_ghz=_config_value(
+            parser, "calibration", "frequency_ghz", defaults.frequency_ghz, float
+        ),
+        beam_angle_deg=_config_value(
+            parser, "calibration", "beam_angle_deg", defaults.beam_angle_deg, float
+        ),
+        phase_start_deg=_config_value(
+            parser, "calibration", "phase_start_deg", defaults.phase_start_deg, float
+        ),
+        phase_end_deg=_config_value(
+            parser, "calibration", "phase_end_deg", defaults.phase_end_deg, float
+        ),
+        phase_step_deg=_config_value(
+            parser, "calibration", "phase_step_deg", defaults.phase_step_deg, float
+        ),
+        default_amplitude=_config_value(
+            parser, "calibration", "default_amplitude", defaults.default_amplitude, float
+        ),
+        settle_time_ms=_config_value(
+            parser, "calibration", "settle_time_ms", defaults.settle_time_ms, int
+        ),
+        sample_count=_config_value(
+            parser, "calibration", "sample_count", defaults.sample_count, int
+        ),
+        turntable_mode=_choice_value(
+            parser,
+            "turntable",
+            "mode",
+            defaults.turntable_mode,
+            (TURNTABLE_MODE_SIMULATED, TURNTABLE_MODE_SERIAL),
+        ),
+        turntable_port=_string_value(parser, "turntable", "serial_port", defaults.turntable_port),
+        turntable_baudrate=_config_value(
+            parser, "turntable", "baudrate", defaults.turntable_baudrate, int
+        ),
+        turntable_slave_id=_config_value(
+            parser, "turntable", "slave_id", defaults.turntable_slave_id, int
+        ),
+        turntable_pulses_per_degree=_config_value(
+            parser,
+            "turntable",
+            "pulses_per_degree",
+            defaults.turntable_pulses_per_degree,
+            float,
+        ),
+        turntable_move_timeout_s=_config_value(
+            parser, "turntable", "move_timeout_s", defaults.turntable_move_timeout_s, float
+        ),
+        turntable_poll_interval_s=_config_value(
+            parser, "turntable", "poll_interval_s", defaults.turntable_poll_interval_s, float
+        ),
+        turntable_settle_time_s=_config_value(
+            parser, "turntable", "settle_time_s", defaults.turntable_settle_time_s, float
+        ),
+    )
+
+
+def _external_path(parser: configparser.ConfigParser, section: str, option: str, fallback: str) -> Path:
+    raw = _string_value(parser, section, option, fallback)
+    path = Path(os.path.expandvars(raw)).expanduser()
+    return path.resolve() if path.is_absolute() else (CONFIG_PATH.parent / path).resolve()
+
+
+_EXTERNAL_CONFIG = _read_external_config(CONFIG_PATH)
+DEFAULTS = load_app_defaults(CONFIG_PATH, _EXTERNAL_CONFIG)
+OUTPUT_DIR = _external_path(_EXTERNAL_CONFIG, "paths", "output_dir", "output")
 
 
 def _normalize_mode(name: str, mode: str, allowed: tuple[str, ...]) -> str:
@@ -159,6 +378,7 @@ def create_spectrum_analyzer(mode: str | None = None):
         if profile == SPECTRUM_ANALYZER_PROFILE_XIAN_GPIB:
             return XianGpibSpectrumAnalyzer(
                 address=DEFAULTS.xian_gpib_visa_address,
+                visa_backend=DEFAULTS.visa_backend,
                 timeout_ms=DEFAULTS.spectrum_analyzer_timeout_ms,
                 sweep_span_ghz=DEFAULTS.spectrum_analyzer_span_ghz,
                 frequency_divisor=DEFAULTS.spectrum_analyzer_frequency_divisor,
@@ -168,6 +388,7 @@ def create_spectrum_analyzer(mode: str | None = None):
             )
         return VisaSpectrumAnalyzer(
             address=DEFAULTS.visa_address,
+            visa_backend=DEFAULTS.visa_backend,
             timeout_ms=DEFAULTS.spectrum_analyzer_timeout_ms,
             sweep_span_ghz=DEFAULTS.spectrum_analyzer_span_ghz,
             frequency_divisor=DEFAULTS.spectrum_analyzer_frequency_divisor,
@@ -234,7 +455,12 @@ def create_signal_source_controller(mode: str | None = None):
     def _make_source(name: str, address: str):
         if "0.0.0.0" in address:
             return SimulatedSignalGenerator(name=name, address=address)
-        return VisaSignalGenerator(name, address, DEFAULTS.signal_source_timeout_ms)
+        return VisaSignalGenerator(
+            name,
+            address,
+            DEFAULTS.signal_source_timeout_ms,
+            visa_backend=DEFAULTS.visa_backend,
+        )
 
     return SignalSourceController(
         lo_source=_make_source("LO", DEFAULTS.lo_signal_source_visa_address),

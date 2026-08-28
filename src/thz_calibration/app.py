@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 
 def _arg_value(flag: str, default: str | None = None) -> str | None:
@@ -27,8 +28,10 @@ def main() -> None:
     - --serial-port COMx：启动时指定默认串口。
     """
     from PySide6.QtGui import QFont
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QMessageBox
 
+    from .config import CONFIG_PATH, CONFIG_WARNINGS, FREQUENCY_PLAN_PATH, TEMPLATE_DIR
     from .ui import CalibrationTestWindow, PhaseConfigWindow
 
     # QApplication 必须在所有 QWidget 创建前存在；字体和 Fusion 样式在这里统一设置。
@@ -38,13 +41,39 @@ def main() -> None:
 
     args = set(sys.argv[1:])
     serial_port = _arg_value("--serial-port")
+    executable_name = Path(sys.executable).stem.casefold()
+    packaged_config_entry = bool(getattr(sys, "frozen", False)) and executable_name == "thz_phase_config"
 
     # 两套 UI 共享同一个 app 入口，避免启动脚本里重复创建 QApplication。
-    if "--config" in args:
+    if "--config" in args or packaged_config_entry:
         window = PhaseConfigWindow(serial_port=serial_port)
     else:
         window = CalibrationTestWindow(serial_port=serial_port)
 
     window.show()
+    if CONFIG_WARNINGS:
+        QMessageBox.warning(
+            window,
+            "外部配置文件存在问题",
+            f"配置文件：{CONFIG_PATH}\n\n" + "\n\n".join(CONFIG_WARNINGS),
+        )
+
+    # 打包后的无界面冒烟测试入口：完整创建窗口和依赖后立即正常退出。
+    if "--smoke-test" in args:
+        import openpyxl  # noqa: F401
+        import pymodbus.client  # noqa: F401
+        import pyvisa
+        import pyvisa_py  # noqa: F401
+        import serial  # noqa: F401
+
+        if not CONFIG_PATH.exists():
+            raise FileNotFoundError(f"external config not found: {CONFIG_PATH}")
+        if not TEMPLATE_DIR.exists():
+            raise FileNotFoundError(f"Excel template directory not found: {TEMPLATE_DIR}")
+        if not FREQUENCY_PLAN_PATH.exists():
+            raise FileNotFoundError(f"frequency plan not found: {FREQUENCY_PLAN_PATH}")
+        resource_manager = pyvisa.ResourceManager("@py")
+        resource_manager.close()
+        QTimer.singleShot(0, app.quit)
 
     sys.exit(app.exec())

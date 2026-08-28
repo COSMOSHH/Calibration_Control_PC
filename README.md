@@ -279,6 +279,27 @@ output/
 | 改 UI1 布局或手动发送反馈 | `src/thz_calibration/ui/phase_config_window.py` |
 | 改整体样式 | `src/thz_calibration/ui/style.py` |
 
+## Windows 便携版打包
+
+发布版使用项目内独立的 Python 3.11 Conda 环境，目标电脑不需要安装 Python 或 Conda：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/create_build_env.ps1
+powershell -ExecutionPolicy Bypass -File packaging/build_portable.ps1
+```
+
+生成目录为 `dist/THz_Calibration_Portable/`。其中 `THz_Calibration.exe` 打开 UI0，
+`THz_Phase_Config.exe` 打开 UI1。运行参数从 EXE 同级的 `config.ini` 读取，修改后重启生效；
+相对输出目录以 `config.ini` 所在目录为基准。`_internal` 是共享运行环境和只读 Excel 资源，发布时不能删除。
+
+### 配置优先级
+
+```text
+命令行串口参数 > UI 当前设置 > config.ini > 程序内置默认值
+```
+
+构建脚本会显式激活目标 Conda 环境的 DLL 搜索路径，避免误收集基础 Conda 环境中的 DLL。
+
 ## 验证命令
 
 语法检查：

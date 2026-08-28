@@ -308,8 +308,10 @@ class VisaSpectrumAnalyzer:
         sweep_points: int = 201,
         rbw_hz: float = 1000.0,
         vbw_hz: float = 1000.0,
+        visa_backend: str = "auto",
     ) -> None:
         self.address = address
+        self.visa_backend = visa_backend
         self.timeout_ms = timeout_ms
         self.sweep_span_ghz = sweep_span_ghz
         self.frequency_divisor = frequency_divisor
@@ -328,7 +330,11 @@ class VisaSpectrumAnalyzer:
         except ImportError as exc:
             raise RuntimeError("pyvisa is required for VISA spectrum analyzer access") from exc
 
-        self._rm = pyvisa.ResourceManager()
+        self._rm = (
+            pyvisa.ResourceManager()
+            if self.visa_backend == "auto"
+            else pyvisa.ResourceManager(f"@{self.visa_backend}")
+        )
         opened_address, instrument, errors = _try_open_visa_resource(self._rm, self.address)
         if instrument is None:
             resources = _safe_list_visa_resources(self._rm)
@@ -449,8 +455,10 @@ class XianGpibSpectrumAnalyzer:
         sweep_points: int = 201,
         rbw_hz: float = 1000.0,
         vbw_hz: float = 1000.0,
+        visa_backend: str = "auto",
     ) -> None:
         self.address = address
+        self.visa_backend = visa_backend
         self.timeout_ms = timeout_ms
         self.sweep_span_ghz = sweep_span_ghz
         self.frequency_divisor = frequency_divisor
@@ -469,7 +477,11 @@ class XianGpibSpectrumAnalyzer:
         except ImportError as exc:
             raise RuntimeError("pyvisa is required for VISA spectrum analyzer access") from exc
 
-        self._rm = pyvisa.ResourceManager()
+        self._rm = (
+            pyvisa.ResourceManager()
+            if self.visa_backend == "auto"
+            else pyvisa.ResourceManager(f"@{self.visa_backend}")
+        )
         opened_address, instrument, errors = _try_open_visa_resource(self._rm, self.address)
         if instrument is None:
             resources = _safe_list_visa_resources(self._rm)

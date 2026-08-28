@@ -75,10 +75,17 @@ class SimulatedSignalGenerator:
 class VisaSignalGenerator:
     """VISA/SCPI control for a Keysight-style CW signal generator."""
 
-    def __init__(self, name: str, address: str, timeout_ms: int = 5000) -> None:
+    def __init__(
+        self,
+        name: str,
+        address: str,
+        timeout_ms: int = 5000,
+        visa_backend: str = "auto",
+    ) -> None:
         self.name = name
         self.address = address
         self.timeout_ms = timeout_ms
+        self.visa_backend = visa_backend
         self._rm = None
         self._instrument = None
 
@@ -88,7 +95,11 @@ class VisaSignalGenerator:
         except ImportError as exc:
             raise RuntimeError("pyvisa is required for VISA signal generator access") from exc
 
-        self._rm = pyvisa.ResourceManager()
+        self._rm = (
+            pyvisa.ResourceManager()
+            if self.visa_backend == "auto"
+            else pyvisa.ResourceManager(f"@{self.visa_backend}")
+        )
         self._instrument = self._rm.open_resource(self.address)
         self._instrument.timeout = self.timeout_ms
 
